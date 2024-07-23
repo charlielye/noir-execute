@@ -1,0 +1,26 @@
+[package]
+name = "noir-execute"
+version = "0.1.0"
+authors = ["Aztec Labs"]
+edition = "2021"
+license = "MIT"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+# local
+acvm = { path = "../noir/acvm-repo/acvm", features=["bn254"] }
+brillig = { path = "../noir/acvm-repo/brillig" }
+noirc_errors = { path = "../noir/compiler/noirc_errors" }
+# nargo_toml = { path = "../noir/tooling/nargo_toml" }
+inkwell = { git = "https://github.com/TheDan64/inkwell", branch = "master", features = ["llvm16-0"] }
+ark-ff = { version = "^0.4.0", default-features = false }
+ark-bn254 = { version = "^0.4.0", default-features = false, features = ["curve"] }
+
+# external
+base64 = "0.21"
+env_logger = "0.11"
+log = "0.4"
+serde_json = "1.0"
+serde = { version = "1.0.136", features = ["derive"] }
+flate2 = "1.0"
