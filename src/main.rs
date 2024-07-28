@@ -31,7 +31,7 @@ use inkwell::context::Context;
 use inkwell::basic_block::BasicBlock;
 use inkwell::builder::Builder;
 use inkwell::module::Module;
-use inkwell::types::{BasicTypeEnum, IntType};
+use inkwell::types::{BasicTypeEnum, IntType, VectorType};
 use inkwell::values::{BasicValueEnum, IntValue};
 use inkwell::AddressSpace;
 use inkwell::IntPredicate;
@@ -195,6 +195,7 @@ fn generate_llvm_ir(opcodes: &Vec<BrilligOpcode>) {
     let i8_ptr_type = i8_type.ptr_type(AddressSpace::default());
     let i64_ptr_type = i64_type.ptr_type(AddressSpace::default());
     let i256_ptr_type = i256_type.ptr_type(AddressSpace::default());
+    let v256_type = i64_type.vec_type(4);
 
     // Declare external functions
     let bn254_fr_add = module.add_function("bn254_fr_add", context.void_type().fn_type(&[i64_ptr_type.into(), i64_ptr_type.into(), i64_ptr_type.into()], false), None);
@@ -316,11 +317,12 @@ fn generate_llvm_ir(opcodes: &Vec<BrilligOpcode>) {
 
                 match opcode {
                     BrilligOpcode::Const { destination, bit_size, value } => {
-                        let dest_index = destination.0;
                         // let int_type = context.custom_width_int_type(*bit_size);
                         let limbs = field_element_to_u64_limbs(*value);
-                        // let const_val = int_type.const_int_arbitrary_precision(&limbs);
-                        let const_val = i256_type.const_int_arbitrary_precision(&limbs);
+                        // let const_val = i256_type.const_int_arbitrary_precision(&limbs);
+                        let const_val = VectorType::const_vector(&limbs.iter().map(|&x| i64_type.const_int(x as u64, false)).collect::<Vec<_>>());
+
+                        let dest_index = destination.0;
                         let dest_ptr = get_memory_at_index!(dest_index);
                         builder.build_store(dest_ptr, const_val).unwrap().set_alignment(32);
                     }
@@ -329,7 +331,7 @@ fn generate_llvm_ir(opcodes: &Vec<BrilligOpcode>) {
                             let addr = destination_address.0 + i;
                             let src_ptr = get_calldata_at_index!(i + offset);
                             let dest_ptr = get_memory_at_index!(addr);
-                            let value = builder.build_load(i256_type, src_ptr, "loadtmp").unwrap();
+                            let value = builder.build_load(v256_type, src_ptr, "loadtmp").unwrap();
                             builder.build_store(dest_ptr, value).unwrap().set_alignment(32);
                         }
                     }
@@ -338,23 +340,23 @@ fn generate_llvm_ir(opcodes: &Vec<BrilligOpcode>) {
                         let dest_index = destination.0;
                         let src_ptr = get_memory_at_index!(src_index);
                         let dest_ptr = get_memory_at_index!(dest_index);
-                        let value = builder.build_load(i256_type, src_ptr, "loadtmp").unwrap();
+                        let value = builder.build_load(v256_type, src_ptr, "loadtmp").unwrap();
                         builder.build_store(dest_ptr, value).unwrap().set_alignment(32);
                     }
                     BrilligOpcode::Cast { destination, source, bit_size } => {
-                        // TODO: Some kind of range check or something!?
+                        // TODO: Some kind of range check or something!? Truncate?
                         // Currently just same as Mov.
                         let src_index = source.0;
                         let dest_index = destination.0;
                         let src_ptr = get_memory_at_index!(src_index);
                         let dest_ptr = get_memory_at_index!(dest_index);
-                        let value = builder.build_load(i256_type, src_ptr, "loadtmp").unwrap();
+                        let value = builder.build_load(v256_type, src_ptr, "loadtmp").unwrap();
                         builder.build_store(dest_ptr, value).unwrap().set_alignment(32);
                     }
                     BrilligOpcode::Store { destination_pointer, source } => {
                         let src_index = source.0;
                         let src_ptr = get_memory_at_index!(src_index);
-                        let value = builder.build_load(i256_type, src_ptr, "loadtmp").unwrap();
+                        let value = builder.build_load(v256_type, src_ptr, "loadtmp").unwrap();
 
                         let dest_ptr_index = destination_pointer.0;
                         let dest_ptr_ptr = get_memory_at_index!(dest_ptr_index);
@@ -371,7 +373,7 @@ fn generate_llvm_ir(opcodes: &Vec<BrilligOpcode>) {
                         let src_ptr_ptr = get_memory_at_index!(src_ptr_index);
                         let src_ptr = builder.build_load(i256_type, src_ptr_ptr, "loadtmp").unwrap();
                         let src_gep = get_memory_at_index_!(src_ptr.into_int_value());
-                        let value = builder.build_load(i256_type, src_gep, "loadtmp").unwrap();
+                        let value = builder.build_load(v256_type, src_gep, "loadtmp").unwrap();
 
                         builder.build_store(dest_ptr, value).unwrap().set_alignment(32);
                     }
@@ -546,9 +548,9 @@ fn generate_llvm_ir(opcodes: &Vec<BrilligOpcode>) {
                     _ => unimplemented!("Unimplemented enum variant: {:?}", opcode),
                 }
 
-                // let inst_count = block.get_instructions().count() - before_count;
-                // let opcode_str = &format!("{:?}", opcode);
-                // eprintln!("{inst_count}: {opcode_str}");
+                let inst_count = block.get_instructions().count() - before_count;
+                let opcode_str = &format!("{:?}", opcode);
+                eprintln!("{inst_count}: {opcode_str}");
             }
         }
     }
