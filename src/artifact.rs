@@ -1,10 +1,28 @@
 use acvm::FieldElement;
 use log::debug;
-
 use acvm::acir::brillig::Opcode as BrilligOpcode;
 use acvm::acir::circuit::{Opcode, Program};
+use std::io::Read;
+use serde::{Deserialize, Serialize};
+use noirc_errors::debug_info::ProgramDebugInfo;
 
-use crate::instructions::AvmInstruction;
+#[derive(Debug, Serialize, Deserialize)]
+pub struct CompiledArtifact {
+    pub noir_version: String,
+    // pub abi: serde_json::Value,
+    pub abi: noirc_abi::Abi,
+    #[serde(
+        serialize_with = "Program::serialize_program_base64",
+        deserialize_with = "Program::deserialize_program_base64"
+    )]
+    pub bytecode: Program<FieldElement>,
+    #[serde(
+        serialize_with = "ProgramDebugInfo::serialize_compressed_base64_json",
+        deserialize_with = "ProgramDebugInfo::deserialize_compressed_base64_json"
+    )]
+    pub debug_symbols: ProgramDebugInfo,
+    pub file_map: serde_json::Value,
+}
 
 /// Extract the Brillig program from its `Program` wrapper.
 /// Noir entry point unconstrained functions are compiled to their own list contained
@@ -40,13 +58,5 @@ pub fn dbg_print_brillig_program(brillig_bytecode: &[BrilligOpcode<FieldElement>
     debug!("Printing Brillig program...");
     for (i, instruction) in brillig_bytecode.iter().enumerate() {
         debug!("\tPC:{0} {1:?}", i, instruction);
-    }
-}
-
-/// Print each instruction in an AVM program
-pub fn dbg_print_avm_program(avm_program: &[AvmInstruction]) {
-    debug!("Printing AVM program...");
-    for (i, instruction) in avm_program.iter().enumerate() {
-        debug!("\tPC:{0}: {1}", i, &instruction.to_string());
     }
 }

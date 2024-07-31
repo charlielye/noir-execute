@@ -1,17 +1,33 @@
 #!/bin/bash
 set -e
 
-IN=${1:-hello_world}
-ARCH=${ARCH:-native}
+PROJECT_DIR=${1:-$HOME/noir-projects/hello_world}
 O=${O:-0}
+BB=${BB:-0}
+PACKAGES=${PACKAGES:-0}
+RUN=${RUN:-0}
 
-# (cd ~/aztec-repos/barretenberg/cpp && cmake --preset clang16 -B build && cmake --build build --target libbarretenberg.a libenv.a)
-(cd ~/noir-projects/$IN && nargo compile --silence-warnings)
-
-cargo run ~/noir-projects/$IN/target/$IN.json dummy.out > program.ll
-
-if [ "$ARCH" == "x86-64" ]; then
-  ARGS="-mattr=+avx"
+if [ "$PACKAGES" -eq 1 ]; then
+  sudo apt install -y libpolly-16-dev libz-dev libzstd-dev
 fi
-llc-16 -O$O -march=$ARCH $ARGS -filetype=asm -relocation-model=pic -o program.s program.ll
+
+if [ "$BB" -eq 1 ]; then
+  (cd ~/aztec-repos/barretenberg/cpp && cmake --preset clang16 -B build && cmake --build build --target libbarretenberg.a libenv.a)
+fi
+
+(cd $PROJECT_DIR && nargo compile --silence-warnings)
+
+cargo run -- -p $PROJECT_DIR > program.ll
+
+if [ -n "$ARCH" ]; then
+  ARGS+="-march=$ARCH"
+  if [ "$ARCH" == "x86-64" ]; then
+    ARGS+="-mattr=+avx"
+  fi
+fi
+llc-16 -O$O $ARGS -filetype=asm -relocation-model=pic -o program.s program.ll
 clang++ -O$O program.s -o program -L$HOME/aztec-repos/barretenberg/cpp/build/lib -lbarretenberg -lenv
+
+if [ "$RUN" -eq 1 ]; then
+  time ./program
+fi
