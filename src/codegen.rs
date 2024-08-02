@@ -6,6 +6,7 @@ use acvm::FieldElement;
 use brillig::BinaryFieldOp;
 use brillig::BinaryIntOp;
 use brillig::HeapArray;
+use brillig::IntegerBitSize;
 use brillig::MemoryAddress;
 use brillig::Opcode;
 use brillig::ValueOrArray;
@@ -151,6 +152,7 @@ pub fn generate_llvm_ir(opcodes: &Vec<BrilligOpcode>, calldata_fields: &Vec<Fiel
     let i128_type = context.i128_type();
     let i64_type = context.i64_type();
     let i32_type = context.i32_type();
+    let i16_type = context.i16_type();
     let i8_type = context.i8_type();
     let i1_type = context.bool_type();
     let i8_ptr_type = i8_type.ptr_type(AddressSpace::default());
@@ -162,10 +164,12 @@ pub fn generate_llvm_ir(opcodes: &Vec<BrilligOpcode>, calldata_fields: &Vec<Fiel
     let bn254_fr_add = module.add_function("bn254_fr_add", context.void_type().fn_type(&[i64_ptr_type.into(), i64_ptr_type.into(), i64_ptr_type.into()], false), None);
     let bn254_fr_sub = module.add_function("bn254_fr_sub", context.void_type().fn_type(&[i64_ptr_type.into(), i64_ptr_type.into(), i64_ptr_type.into()], false), None);
     let bn254_fr_mul = module.add_function("bn254_fr_mul", context.void_type().fn_type(&[i64_ptr_type.into(), i64_ptr_type.into(), i64_ptr_type.into()], false), None);
+    let bn254_fr_div = module.add_function("bn254_fr_div", context.void_type().fn_type(&[i64_ptr_type.into(), i64_ptr_type.into(), i64_ptr_type.into()], false), None);
     let bn254_fr_eql = module.add_function("bn254_fr_eql", i1_type.fn_type(&[i64_ptr_type.into(), i64_ptr_type.into()], false), None);
     let bb_printf_func = module.add_function("bb_printf", i32_type.fn_type(&[i8_ptr_type.into()], true), None);
-    let printf_func = module.add_function("printf", i32_type.fn_type(&[i8_ptr_type.into()], true), None);
+    let print_fields_func = module.add_function("print_u256", context.void_type().fn_type(&[i64_ptr_type.into(), i64_type.into()], false), None);
     let to_radix_func = module.add_function("to_radix", context.void_type().fn_type(&[i64_ptr_type.into(), i64_ptr_type.into(), i64_type.into(), i64_type.into()], false), None);
+    let sha256_func = module.add_function("blackbox_sha256", context.void_type().fn_type(&[i8_ptr_type.into(), i64_type.into(), i8_ptr_type.into()], false), None);
 
     // Function signature for main
     let fn_type = i32_type.fn_type(&[], false);
@@ -253,8 +257,6 @@ pub fn generate_llvm_ir(opcodes: &Vec<BrilligOpcode>, calldata_fields: &Vec<Fiel
         module.add_function(&function_name, function_type, None);
     }
 
-    // module.print_to_stderr();
-    // return;
     for (function_location, blocks) in &opcode_map {
         let function_name = format!("function_at_{}", function_location);
         let function = module.get_function(&function_name).unwrap();
@@ -290,7 +292,7 @@ pub fn generate_llvm_ir(opcodes: &Vec<BrilligOpcode>, calldata_fields: &Vec<Fiel
                             let addr = destination_address.0 + i;
                             let src_ptr = get_calldata_at_index!(i + offset);
                             let dest_ptr = get_memory_at_index!(addr);
-                            let value = builder.build_load(v256_type, src_ptr, "loadtmp").unwrap();
+                            let value = builder.build_load(v256_type, src_ptr, "cdc_val").unwrap();
                             builder.build_store(dest_ptr, value).unwrap().set_alignment(32);
                         }
                     }
@@ -299,7 +301,7 @@ pub fn generate_llvm_ir(opcodes: &Vec<BrilligOpcode>, calldata_fields: &Vec<Fiel
                         let dest_index = destination.0;
                         let src_ptr = get_memory_at_index!(src_index);
                         let dest_ptr = get_memory_at_index!(dest_index);
-                        let value = builder.build_load(v256_type, src_ptr, "loadtmp").unwrap();
+                        let value = builder.build_load(v256_type, src_ptr, "mov_val").unwrap();
                         builder.build_store(dest_ptr, value).unwrap().set_alignment(32);
                     }
                     BrilligOpcode::Cast { destination, source, bit_size } => {
@@ -309,17 +311,17 @@ pub fn generate_llvm_ir(opcodes: &Vec<BrilligOpcode>, calldata_fields: &Vec<Fiel
                         let dest_index = destination.0;
                         let src_ptr = get_memory_at_index!(src_index);
                         let dest_ptr = get_memory_at_index!(dest_index);
-                        let value = builder.build_load(v256_type, src_ptr, "loadtmp").unwrap();
+                        let value = builder.build_load(v256_type, src_ptr, "cast_val").unwrap();
                         builder.build_store(dest_ptr, value).unwrap().set_alignment(32);
                     }
                     BrilligOpcode::Store { destination_pointer, source } => {
                         let src_index = source.0;
                         let src_ptr = get_memory_at_index!(src_index);
-                        let value = builder.build_load(v256_type, src_ptr, "loadtmp").unwrap();
+                        let value = builder.build_load(v256_type, src_ptr, "store_val").unwrap();
 
                         let dest_ptr_index = destination_pointer.0;
                         let dest_ptr_ptr = get_memory_at_index!(dest_ptr_index);
-                        let dest_ptr = builder.build_load(i256_type, dest_ptr_ptr, "loadtmp").unwrap();
+                        let dest_ptr = builder.build_load(i32_type, dest_ptr_ptr, "store_dest").unwrap();
                         let dest_gep = get_memory_at_index_!(dest_ptr.into_int_value());
 
                         builder.build_store(dest_gep, value).unwrap().set_alignment(32);
@@ -330,9 +332,9 @@ pub fn generate_llvm_ir(opcodes: &Vec<BrilligOpcode>, calldata_fields: &Vec<Fiel
 
                         let src_ptr_index = source_pointer.0;
                         let src_ptr_ptr = get_memory_at_index!(src_ptr_index);
-                        let src_ptr = builder.build_load(i256_type, src_ptr_ptr, "loadtmp").unwrap();
+                        let src_ptr = builder.build_load(i256_type, src_ptr_ptr, "load_src").unwrap();
                         let src_gep = get_memory_at_index_!(src_ptr.into_int_value());
-                        let value = builder.build_load(v256_type, src_gep, "loadtmp").unwrap();
+                        let value = builder.build_load(v256_type, src_gep, "load_val").unwrap();
 
                         builder.build_store(dest_ptr, value).unwrap().set_alignment(32);
                     }
@@ -355,17 +357,27 @@ pub fn generate_llvm_ir(opcodes: &Vec<BrilligOpcode>, calldata_fields: &Vec<Fiel
                             BinaryFieldOp::Mul => {
                                 builder.build_call(bn254_fr_mul, &[lhs_ptr.into(), rhs_ptr.into(), result_ptr.into()], "mul_call");
                             }
+                            BinaryFieldOp::Div => {
+                                builder.build_call(bn254_fr_div, &[lhs_ptr.into(), rhs_ptr.into(), result_ptr.into()], "mul_call");
+                            }
                             BinaryFieldOp::Equals => {
-                                let lhs_val = builder.build_load(i256_type, lhs_ptr, "load_lhs").unwrap().into_int_value();
-                                let rhs_val = builder.build_load(i256_type, rhs_ptr, "load_rhs").unwrap().into_int_value();
-                                builder.build_int_compare(IntPredicate::EQ, lhs_val, rhs_val, "eq").unwrap();
+                                let lhs_val = builder.build_load(i256_type, lhs_ptr, "bfo_eq_lhs").unwrap().into_int_value();
+                                let rhs_val = builder.build_load(i256_type, rhs_ptr, "bfo_eq_rhs").unwrap().into_int_value();
+                                let result = builder.build_int_compare(IntPredicate::EQ, lhs_val, rhs_val, "bfo_eq").unwrap();
                                 // let result = builder.build_call(bn254_fr_eql, &[lhs_ptr.into(), rhs_ptr.into()], "eql_call").unwrap();
-                                // builder.build_store(result_ptr, result.try_as_basic_value().unwrap_left());
+                                builder.build_store(result_ptr, result);
+                            }
+                            BinaryFieldOp::LessThan => {
+                                let lhs_val = builder.build_load(i256_type, lhs_ptr, "bfo_lt_lhs").unwrap().into_int_value();
+                                let rhs_val = builder.build_load(i256_type, rhs_ptr, "bfo_lt_rhs").unwrap().into_int_value();
+                                let result = builder.build_int_compare(IntPredicate::ULT, lhs_val, rhs_val, "bfo_lt").unwrap();
+                                builder.build_store(result_ptr, result);
                             }
                             BinaryFieldOp::LessThanEquals => {
-                                let lhs_val = builder.build_load(i256_type, lhs_ptr, "load_lhs").unwrap().into_int_value();
-                                let rhs_val = builder.build_load(i256_type, rhs_ptr, "load_rhs").unwrap().into_int_value();
-                                builder.build_int_compare(IntPredicate::ULE, lhs_val, rhs_val, "ule").unwrap();
+                                let lhs_val = builder.build_load(i256_type, lhs_ptr, "bfo_lte_lhs").unwrap().into_int_value();
+                                let rhs_val = builder.build_load(i256_type, rhs_ptr, "bfo_lte_rhs").unwrap().into_int_value();
+                                let result = builder.build_int_compare(IntPredicate::ULE, lhs_val, rhs_val, "bfo_lte").unwrap();
+                                builder.build_store(result_ptr, result);
                             }
                             _ => unimplemented!("Unimplemented BinaryFieldOp variant: {:?}", op),
                         }
@@ -380,42 +392,55 @@ pub fn generate_llvm_ir(opcodes: &Vec<BrilligOpcode>, calldata_fields: &Vec<Fiel
                         let result_ptr = get_memory_at_index!(result_index);
 
                         // TODO: Handle correct bit_size.
-                        let lhs_val = builder.build_load(i256_type, lhs_ptr, "load_lhs").unwrap().into_int_value();
-                        let rhs_val = builder.build_load(i256_type, rhs_ptr, "load_rhs").unwrap().into_int_value();
+                        // Zero destination for < 256 bits?
+                        let itype = match bit_size {
+                            IntegerBitSize::U1 => i1_type,
+                            IntegerBitSize::U8 => i8_type,
+                            IntegerBitSize::U16 => i16_type,
+                            IntegerBitSize::U32 => i32_type,
+                            IntegerBitSize::U64 => i64_type,
+                            IntegerBitSize::U128 => i128_type,
+                            _ => unreachable!("Unsupported bit size: {bit_size}")
+                        };
+                        let lhs_val = builder.build_load(itype, lhs_ptr, "bio_lhs").unwrap().into_int_value();
+                        let rhs_val = builder.build_load(itype, rhs_ptr, "bio_rhs").unwrap().into_int_value();
 
                         let value = match op {
                             BinaryIntOp::Add => {
-                                builder.build_int_add(lhs_val, rhs_val, "add").unwrap()
+                                builder.build_int_add(lhs_val, rhs_val, "bio_add").unwrap()
                             }
                             BinaryIntOp::Sub => {
-                                builder.build_int_sub(lhs_val, rhs_val, "sub").unwrap()
+                                builder.build_int_sub(lhs_val, rhs_val, "bio_sub").unwrap()
                             }
                             BinaryIntOp::Mul => {
-                                builder.build_int_mul(lhs_val, rhs_val, "mul").unwrap()
+                                builder.build_int_mul(lhs_val, rhs_val, "bio_mul").unwrap()
                             }
                             BinaryIntOp::Div => {
-                                builder.build_int_unsigned_div(lhs_val, rhs_val, "udiv").unwrap()
+                                builder.build_int_unsigned_div(lhs_val, rhs_val, "bio_udiv").unwrap()
                             }
                             BinaryIntOp::LessThan => {
-                                builder.build_int_compare(IntPredicate::ULT, lhs_val, rhs_val, "ult").unwrap()
+                                builder.build_int_compare(IntPredicate::ULT, lhs_val, rhs_val, "bio_ult").unwrap()
                             }
                             BinaryIntOp::LessThanEquals => {
-                                builder.build_int_compare(IntPredicate::ULE, lhs_val, rhs_val, "ule").unwrap()
+                                builder.build_int_compare(IntPredicate::ULE, lhs_val, rhs_val, "bio_ule").unwrap()
                             }
                             BinaryIntOp::Equals => {
-                                builder.build_int_compare(IntPredicate::EQ, lhs_val, rhs_val, "eq").unwrap()
+                                builder.build_int_compare(IntPredicate::EQ, lhs_val, rhs_val, "bio_eq").unwrap()
                             }
                             BinaryIntOp::Shl => {
-                                builder.build_left_shift(lhs_val, rhs_val, "shl").unwrap()
+                                builder.build_left_shift(lhs_val, rhs_val, "bio_shl").unwrap()
                             }
                             BinaryIntOp::Shr => {
-                                builder.build_right_shift(lhs_val, rhs_val, false, "shr").unwrap()
+                                builder.build_right_shift(lhs_val, rhs_val, false, "bio_shr").unwrap()
                             }
                             BinaryIntOp::Or => {
-                                builder.build_or(lhs_val, rhs_val, "or").unwrap()
+                                builder.build_or(lhs_val, rhs_val, "bio_or").unwrap()
                             }
                             BinaryIntOp::And => {
-                                builder.build_and(lhs_val, rhs_val, "and").unwrap()
+                                builder.build_and(lhs_val, rhs_val, "bio_and").unwrap()
+                            }
+                            BinaryIntOp::Xor => {
+                                builder.build_xor(lhs_val, rhs_val, "bio_xor").unwrap()
                             }
                             _ => unimplemented!("Unimplemented BinaryIntOp variant: {:?}", op)
                         };
@@ -435,43 +460,40 @@ pub fn generate_llvm_ir(opcodes: &Vec<BrilligOpcode>, calldata_fields: &Vec<Fiel
                     BrilligOpcode::JumpIf { condition, location } => {
                         let cond_index = condition.0;
                         let cond_ptr = get_memory_at_index!(cond_index);
-                        let cond_val = builder.build_load(i1_type, cond_ptr, "load_cond").unwrap().into_int_value();
+                        let cond_val = builder.build_load(i1_type, cond_ptr, "ji_cond").unwrap().into_int_value();
                         builder.build_conditional_branch(cond_val, block_map[location], block_map[&(block_location+opcode_index+1)]);
                     }
                     BrilligOpcode::JumpIfNot { condition, location } => {
                         let cond_index = condition.0;
                         let cond_ptr = get_memory_at_index!(cond_index);
-                        let cond_val = builder.build_load(i1_type, cond_ptr, "load_cond").unwrap().into_int_value();
+                        let cond_val = builder.build_load(i1_type, cond_ptr, "jin_cond").unwrap().into_int_value();
                         builder.build_conditional_branch(cond_val.const_not(), block_map[location], block_map[&(block_location+opcode_index+1)]);
                     }
                     BrilligOpcode::Trap { revert_data } => {
-                        let value = revert_data;
-                        let lhs_ptr = get_memory_at_index!(value.pointer.0);
-                        let ptr_val = builder.build_load(i256_type, lhs_ptr, "load").unwrap();
-                        let dest_gep = get_memory_at_index_!(ptr_val.into_int_value());
-                        builder.build_call(
-                            bb_printf_func,
-                            &[ dest_gep.into() ],
-                            "printf_call",
-                        );
+                        let ptr = get_memory_at_index!(revert_data.pointer.0);
+                        let size = i64_type.const_int(revert_data.size as u64, false);
+                        builder.build_call(print_fields_func, &[ ptr.into(), size.into()], "print_fields_call");
+
                         let trap_intrinsic = Intrinsic::find("llvm.trap").unwrap();
                         let trap_function = trap_intrinsic.get_declaration(&module, &[]).unwrap();
                         builder.build_call(trap_function, &[], "trap_call");
                         builder.build_unreachable();
                     }
                     BrilligOpcode::Stop { return_data_offset, return_data_size } => {
+                        let ptr = get_memory_at_index!(*return_data_offset);
+                        let size = i64_type.const_int(*return_data_size as u64, false);
+                        builder.build_call(print_fields_func, &[ ptr.into(), size.into()], "print_fields_call");
                         builder.build_return(None);
                     }
                     BrilligOpcode::Return => {
                         builder.build_return(None);
                     }
                     BrilligOpcode::BlackBox(op) => {
-                        // TODO: IMPLEMENT!
                         match op {
                             brillig::BlackBoxOp::ToRadix { input, radix, output } => {
                                 let input_ptr = get_memory_at_index!(input.0);
                                 let output_ptr_ptr = get_memory_at_index!(output.pointer.0);
-                                let output_ptr = builder.build_load(i256_type, output_ptr_ptr, "loadtmp").unwrap();
+                                let output_ptr = builder.build_load(i256_type, output_ptr_ptr, "bb_tr_out_ptr").unwrap();
                                 let output_gep = get_memory_at_index_!(output_ptr.into_int_value());
                                 let size = i64_type.const_int(output.size as u64, false);
                                 let radix = i64_type.const_int(*radix as u64, false);
@@ -481,25 +503,49 @@ pub fn generate_llvm_ir(opcodes: &Vec<BrilligOpcode>, calldata_fields: &Vec<Fiel
                                     "to_radix_call",
                                 );
                             }
-                            _ => eprintln!("Skipping BlackBox: {:?}", op)
+                            brillig::BlackBoxOp::Sha256 { message, output } => {
+                                let message_ptr_ptr = get_memory_at_index!(message.pointer.0);
+                                let message_ptr = builder.build_load(i256_type, message_ptr_ptr, "bb_sha_msg_ptr").unwrap();
+                                let message_gep = get_memory_at_index_!(message_ptr.into_int_value());
+
+                                let message_size_ptr = get_memory_at_index!(message.size.0);
+                                let message_size = builder.build_load(i64_type, message_size_ptr, "bb_sha_msg_size").unwrap();
+
+                                let output_ptr_ptr = get_memory_at_index!(output.pointer.0);
+                                let output_ptr = builder.build_load(i256_type, output_ptr_ptr, "bb_sha_out_ptr").unwrap();
+                                let output_gep = get_memory_at_index_!(output_ptr.into_int_value());
+
+                                builder.build_call(
+                                    sha256_func,
+                                    &[ message_gep.into(), message_size.into(), output_gep.into() ],
+                                    "sha256_call",
+                                );
+                            }
+                            // _ => eprintln!("Skipping BlackBox: {:?}", op)
+                            _ => unimplemented!("Unimplemented BlackBox: {:?}", op)
                         }
                     }
                     BrilligOpcode::ForeignCall { function, destinations, destination_value_types, inputs, input_value_types} => {
                         match function.as_str() {
                             "print" => {
-                                // eprintln!("{:?}", inputs);
-                                // eprintln!("{:?}", input_value_types);
-                                // eprintln!("{:?}", destinations);
-                                // eprintln!("{:?}", destination_value_types);
-                                let value = if let ValueOrArray::HeapArray(v) = inputs[1] { v } else { unreachable!() };
-                                let lhs_ptr = get_memory_at_index!(value.pointer.0);
-                                let ptr_val = builder.build_load(i256_type, lhs_ptr, "load").unwrap();
-                                let dest_gep = get_memory_at_index_!(ptr_val.into_int_value());
-                                builder.build_call(
-                                    bb_printf_func,
-                                    &[ dest_gep.into() ],
-                                    "printf_call",
-                                );
+                                // let value = if let ValueOrArray::HeapArray(v) = inputs[1] { v } else { unreachable!() };
+                                match inputs[1] {
+                                    ValueOrArray::HeapArray(v) =>  {
+                                        let lhs_ptr = get_memory_at_index!(v.pointer.0);
+                                        let ptr_val = builder.build_load(i256_type, lhs_ptr, "fc_val_ptr").unwrap();
+                                        let ptr_value = get_memory_at_index_!(ptr_val.into_int_value());
+                                        builder.build_call(
+                                            bb_printf_func,
+                                            &[ ptr_value.into() ],
+                                            "printf_call",
+                                        );
+                                    }
+                                    ValueOrArray::MemoryAddress(v) => {
+                                        let ptr = get_memory_at_index!(v.0);
+                                        builder.build_call(print_fields_func, &[ ptr.into(), i64_type.const_int(1, false).into()], "print_fields_call");
+                                    }
+                                    _ => unimplemented!("Unknown: {:?}", inputs[1]),
+                                };
                             }
                             _ => eprintln!("Skipping ForeignCall: {:?}", function),
                         }
@@ -518,41 +564,6 @@ pub fn generate_llvm_ir(opcodes: &Vec<BrilligOpcode>, calldata_fields: &Vec<Fiel
     let function = module.get_function("function_at_0").unwrap();
     builder.build_call(function, &[], "calltmp");
 
-    let format_str = builder.build_global_string_ptr(
-        "0x%016llx%016llx%016llx%016llx\n",
-        "format_str",
-    ).unwrap();
-
-    // let i64_type = context.i64_type();
-    let indices = [
-        i64_type.const_int(0, false),
-        i64_type.const_int(1, false),
-        i64_type.const_int(2, false),
-        i64_type.const_int(3, false),
-    ];
-
-    let base_gep = unsafe {
-        builder.build_gep(i256_type, memory, &[i64_type.const_int(2050, false)], "base_elem_ptr")
-    }.unwrap();
-
-    let values: Vec<_> = indices.iter().map(|&index| {
-        let elem_gep = unsafe {
-            builder.build_gep(i64_type, base_gep, &[index], "elem_ptr")
-        }.unwrap();
-        builder.build_load(i64_type, elem_gep, "val").unwrap().into_int_value()
-    }).collect();
-
-    builder.build_call(
-        printf_func,
-        &[
-            format_str.as_pointer_value().into(),
-            values[3].into(),
-            values[2].into(),
-            values[1].into(),
-            values[0].into()
-        ],
-        "printf_call",
-    );
     builder.build_return(Some(&i32_type.const_int(0, false)));
 
     eprintln!("Build took: {:?}", build_start.elapsed());

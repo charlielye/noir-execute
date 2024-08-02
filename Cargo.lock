@@ -1455,6 +1455,8 @@ dependencies = [
  "noirc_frontend",
  "num-bigint",
  "serde",
+ "serde_json",
+ "serde_with",
  "thiserror",
  "tracing",
 ]
@@ -1464,6 +1466,7 @@ name = "noirc_frontend"
 version = "0.32.0"
 dependencies = [
  "acvm",
+ "bn254_blackbox_solver",
  "cfg-if",
  "chumsky",
  "fm",

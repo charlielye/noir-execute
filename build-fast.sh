@@ -15,7 +15,7 @@ if [ "$BB" -eq 1 ]; then
   (cd ~/aztec-repos/barretenberg/cpp && cmake --preset clang16 -B build && cmake --build build --target libbarretenberg.a libenv.a)
 fi
 
-(cd $PROJECT_DIR && nargo compile --silence-warnings)
+(cd $PROJECT_DIR && rm -rf target && nargo compile --silence-warnings --force-brillig)
 
 cargo run -- -p $PROJECT_DIR > program.ll
 
