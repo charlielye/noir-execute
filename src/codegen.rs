@@ -13,6 +13,7 @@ use brillig::ValueOrArray;
 use env_logger::Env;
 use inkwell::intrinsics::Intrinsic;
 use inkwell::values::AnyValue;
+use inkwell::values::BasicValue;
 use inkwell::values::PointerValue;
 use log::warn;
 use std::collections::HashMap;
@@ -296,6 +297,27 @@ pub fn generate_llvm_ir(opcodes: &Vec<BrilligOpcode>, calldata_fields: &Vec<Fiel
                             builder.build_store(dest_ptr, value).unwrap().set_alignment(32);
                         }
                     }
+                    BrilligOpcode::ConditionalMov { destination, source_a, source_b, condition } => {
+                        let cond_index = condition.0;
+                        let src_a_index = source_a.0;
+                        let src_b_index = source_b.0;
+                        let dest_index = destination.0;
+
+                        let cond_ptr = get_memory_at_index!(cond_index);
+                        let src_a_ptr = get_memory_at_index!(src_a_index);
+                        let src_b_ptr = get_memory_at_index!(src_b_index);
+                        let dest_ptr = get_memory_at_index!(dest_index);
+
+                        let cond_val = builder.build_load(i256_type, cond_ptr, "cond_val").unwrap().into_int_value();
+                        let src_a_val = builder.build_load(i256_type, src_a_ptr, "src_a_val").unwrap();
+                        let src_b_val = builder.build_load(i256_type, src_b_ptr, "src_b_val").unwrap();
+
+                        let zero = i256_type.const_int(0, false);
+                        let cmp = builder.build_int_compare(IntPredicate::NE, cond_val, zero, "cmp").unwrap();
+
+                        let selected_val = builder.build_select(cmp, src_a_val, src_b_val, "selected_val").unwrap();
+                        builder.build_store(dest_ptr, selected_val).unwrap().set_alignment(32);
+                    },
                     BrilligOpcode::Mov { destination, source } => {
                         let src_index = source.0;
                         let dest_index = destination.0;
@@ -431,7 +453,12 @@ pub fn generate_llvm_ir(opcodes: &Vec<BrilligOpcode>, calldata_fields: &Vec<Fiel
                                 builder.build_left_shift(lhs_val, rhs_val, "bio_shl").unwrap()
                             }
                             BinaryIntOp::Shr => {
-                                builder.build_right_shift(lhs_val, rhs_val, false, "bio_shr").unwrap()
+                                // builder.build_right_shift(lhs_val, rhs_val, false, "bio_shr").unwrap()
+                                let bs = itype.const_int(itype.get_bit_width().into(), false);
+                                let cmp = builder.build_int_compare(IntPredicate::UGE, rhs_val, bs, "cmp_ge_bs").unwrap();
+                                let zero = itype.const_int(0, false);
+                                let shifted = builder.build_right_shift(lhs_val, rhs_val, false, "bio_shr").unwrap();
+                                builder.build_select(cmp, zero, shifted, "select_shr").unwrap().into_int_value()
                             }
                             BinaryIntOp::Or => {
                                 builder.build_or(lhs_val, rhs_val, "bio_or").unwrap()
