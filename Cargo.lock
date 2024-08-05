@@ -1455,8 +1455,6 @@ dependencies = [
  "noirc_frontend",
  "num-bigint",
  "serde",
- "serde_json",
- "serde_with",
  "thiserror",
  "tracing",
 ]

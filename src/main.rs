@@ -55,7 +55,7 @@ fn main() {
     let result = run(run_args);
 
     match result {
-        Ok(_) => eprintln!("Run completed successfully."),
+        Ok(_) => {},
         Err(e) => eprintln!("Error: {:?}", e),
     }
 }

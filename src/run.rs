@@ -11,9 +11,6 @@ use crate::{artifact::CompiledArtifact, codegen::generate_llvm_ir};
 /// Executes a circuit to calculate its return value
 #[derive(Parser, Debug, Clone)]
 pub(crate) struct RunArgs {
-    /// Write the execution witness to named file
-    // witness_name: Option<String>,
-
     #[arg(long, short)]
     project_dir: PathBuf,
 
@@ -28,6 +25,9 @@ pub(crate) struct RunArgs {
     /// Execute all packages in the workspace
     #[arg(long, conflicts_with = "package")]
     workspace: bool,
+
+    #[arg(long)]
+    ill_trap: bool,
 }
 
 #[derive(Debug, Error)]
@@ -74,6 +74,7 @@ pub(crate) fn run(args: RunArgs) -> Result<(), RunError> {
             program,
             package,
             &args.prover_name,
+            args.ill_trap,
             None
             // args.oracle_resolver.as_deref(),
         )?;
@@ -109,6 +110,7 @@ fn generate_program(
   program: CompiledArtifact,
   package: &Package,
   prover_name: &str,
+  ill_trap: bool,
   foreign_call_resolver_url: Option<&str>,
 ) -> Result<(), RunError> {
   // Parse the initial witness values from Prover.toml
@@ -122,7 +124,7 @@ fn generate_program(
   assert!(program.bytecode.unconstrained_functions.len() == 1);
 
   for function in &program.bytecode.unconstrained_functions {
-      generate_llvm_ir(&function.bytecode, &calldata);
+      generate_llvm_ir(&function.bytecode, &calldata, ill_trap);
       // println!("");
       // for opcode in &function.bytecode {
       //     println!("{:?}", opcode);
