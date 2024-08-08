@@ -2,4 +2,5 @@
 
 shopt -s extglob
 
-./run_dir.sh ~/aztec-repos/noir/test_programs/execution_success/!(regression_4709)
+# 4709 produces so much bytecode it's too slow to wait for.
+./run-dir.sh ~/aztec-repos/noir/test_programs/execution_success/!(regression_4709)

@@ -5,6 +5,7 @@
 use acvm::FieldElement;
 use brillig::BinaryFieldOp;
 use brillig::BinaryIntOp;
+use brillig::BitSize;
 use brillig::HeapArray;
 use brillig::IntegerBitSize;
 use brillig::MemoryAddress;
@@ -12,7 +13,9 @@ use brillig::Opcode;
 use brillig::ValueOrArray;
 use env_logger::Env;
 use inkwell::intrinsics::Intrinsic;
+use inkwell::types::BasicMetadataTypeEnum;
 use inkwell::values::AnyValue;
+use inkwell::values::BasicMetadataValueEnum;
 use inkwell::values::BasicValue;
 use inkwell::values::PointerValue;
 use log::warn;
@@ -164,6 +167,10 @@ pub fn generate_llvm_ir(opcodes: &Vec<BrilligOpcode>, calldata_fields: &Vec<Fiel
     let print_fields_func = module.add_function("print_u256", context.void_type().fn_type(&[i64_ptr_type.into(), i64_type.into()], false), None);
     let to_radix_func = module.add_function("to_radix", context.void_type().fn_type(&[i64_ptr_type.into(), i64_ptr_type.into(), i64_type.into(), i64_type.into()], false), None);
     let sha256_func = module.add_function("blackbox_sha256", context.void_type().fn_type(&[i8_ptr_type.into(), i64_type.into(), i8_ptr_type.into()], false), None);
+    let blake2s_func = module.add_function("blackbox_blake2s", context.void_type().fn_type(&[i8_ptr_type.into(), i64_type.into(), i8_ptr_type.into()], false), None);
+    let pedersen_hash_func = module.add_function("blackbox_pedersen_hash", context.void_type().fn_type(&[i8_ptr_type.into(), i64_type.into(), i64_type.into(), i8_ptr_type.into()], false), None);
+    let pedersen_commit_func = module.add_function("blackbox_pedersen_commit", context.void_type().fn_type(&[i8_ptr_type.into(), i64_type.into(), i64_type.into(), i8_ptr_type.into()], false), None);
+    let aes_encrypt_func = module.add_function("blackbox_aes_encrypt", context.void_type().fn_type(&[i64_ptr_type.into(), i64_ptr_type.into(), i64_ptr_type.into(), i64_type.into(), i64_ptr_type.into(), i64_ptr_type.into()], false), None);
     let exit_fn = module.add_function("exit", context.void_type().fn_type(&[i32_type.into()], false), None);
 
     // Function signature for main
@@ -249,6 +256,7 @@ pub fn generate_llvm_ir(opcodes: &Vec<BrilligOpcode>, calldata_fields: &Vec<Fiel
     // }
 
     let build_start = Instant::now();
+
     // Pre-add all functions to the module, so we can reference them in calls.
     for (function_location, blocks) in &opcode_map {
         let function_name = format!("function_at_{}", function_location);
@@ -325,14 +333,35 @@ pub fn generate_llvm_ir(opcodes: &Vec<BrilligOpcode>, calldata_fields: &Vec<Fiel
                         builder.build_store(dest_ptr, value).unwrap().set_alignment(32);
                     }
                     BrilligOpcode::Cast { destination, source, bit_size } => {
-                        // TODO: Some kind of range check or something!? Truncate?
-                        // Currently just same as Mov.
                         let src_index = source.0;
                         let dest_index = destination.0;
                         let src_ptr = get_memory_at_index!(src_index);
                         let dest_ptr = get_memory_at_index!(dest_index);
-                        let value = builder.build_load(v256_type, src_ptr, "cast_val").unwrap();
-                        builder.build_store(dest_ptr, value).unwrap().set_alignment(32);
+
+                        let itype = match bit_size {
+                            BitSize::Integer(IntegerBitSize::U1) => i8_type,
+                            BitSize::Integer(IntegerBitSize::U8) => i8_type,
+                            BitSize::Integer(IntegerBitSize::U16) => i16_type,
+                            BitSize::Integer(IntegerBitSize::U32) => i32_type,
+                            BitSize::Integer(IntegerBitSize::U64) => i64_type,
+                            BitSize::Integer(IntegerBitSize::U128) => i128_type,
+                            BitSize::Field => i256_type,
+                            _ => unreachable!("Unsupported bit size: {:?}", bit_size)
+                        };
+
+                        let value = builder.build_load(itype, src_ptr, "cast_val").unwrap();
+                        // Zero destination.
+                        builder.build_store(dest_ptr, i256_type.const_int(0, false)).unwrap().set_alignment(32);
+
+                        // builder.build_store(dest_ptr, value).unwrap().set_alignment(32);
+
+                        if let BitSize::Integer(IntegerBitSize::U1) = bit_size {
+                            // For 1-bit size, mask the value to keep only the LSB.
+                            let masked_value = builder.build_and(value.into_int_value(), i8_type.const_int(1, false), "masked").unwrap();
+                            builder.build_store(dest_ptr, masked_value).unwrap().set_alignment(32);
+                        } else {
+                            builder.build_store(dest_ptr, value).unwrap().set_alignment(32);
+                        }
                     }
                     BrilligOpcode::Store { destination_pointer, source } => {
                         let src_index = source.0;
@@ -489,7 +518,7 @@ pub fn generate_llvm_ir(opcodes: &Vec<BrilligOpcode>, calldata_fields: &Vec<Fiel
 
                         // Zero destination for < 256 bits?
                         // TODO: maybe can make assumptions
-                        // builder.build_store(result_ptr, i256_type.const_int(0, false)).unwrap().set_alignment(32);
+                        builder.build_store(result_ptr, i256_type.const_int(0, false)).unwrap().set_alignment(32);
 
                         builder.build_store(result_ptr, value).unwrap().set_alignment(32);
                     }
@@ -556,6 +585,24 @@ pub fn generate_llvm_ir(opcodes: &Vec<BrilligOpcode>, calldata_fields: &Vec<Fiel
                                     "to_radix_call",
                                 );
                             }
+                            brillig::BlackBoxOp::Blake2s { message, output } => {
+                                let message_ptr_ptr = get_memory_at_index!(message.pointer.0);
+                                let message_ptr = builder.build_load(i256_type, message_ptr_ptr, "bb_blake2s_msg_ptr").unwrap();
+                                let message_gep = get_memory_at_index_!(message_ptr.into_int_value());
+
+                                let message_size_ptr = get_memory_at_index!(message.size.0);
+                                let message_size = builder.build_load(i64_type, message_size_ptr, "bb_blake2s_msg_size").unwrap();
+
+                                let output_ptr_ptr = get_memory_at_index!(output.pointer.0);
+                                let output_ptr = builder.build_load(i256_type, output_ptr_ptr, "bb_blake2s_out_ptr").unwrap();
+                                let output_gep = get_memory_at_index_!(output_ptr.into_int_value());
+
+                                builder.build_call(
+                                    blake2s_func,
+                                    &[ message_gep.into(), message_size.into(), output_gep.into() ],
+                                    "blake2s_call",
+                                );
+                            }
                             brillig::BlackBoxOp::Sha256 { message, output } => {
                                 let message_ptr_ptr = get_memory_at_index!(message.pointer.0);
                                 let message_ptr = builder.build_load(i256_type, message_ptr_ptr, "bb_sha_msg_ptr").unwrap();
@@ -573,8 +620,76 @@ pub fn generate_llvm_ir(opcodes: &Vec<BrilligOpcode>, calldata_fields: &Vec<Fiel
                                     &[ message_gep.into(), message_size.into(), output_gep.into() ],
                                     "sha256_call",
                                 );
-                            }
-                            // _ => eprintln!("Skipping BlackBox: {:?}", op)
+                            },
+                            brillig::BlackBoxOp::PedersenHash { inputs, domain_separator, output } => {
+                                let inputs_ptr_ptr = get_memory_at_index!(inputs.pointer.0);
+                                let inputs_ptr = builder.build_load(i256_type, inputs_ptr_ptr, "bb_ped_hash_in_ptr").unwrap();
+                                let inputs_gep = get_memory_at_index_!(inputs_ptr.into_int_value());
+
+                                let inputs_size_ptr = get_memory_at_index!(inputs.size.0);
+                                let inputs_size = builder.build_load(i64_type, inputs_size_ptr, "bb_ped_hash_in_size").unwrap();
+
+                                let separator = builder.build_load(i64_type, get_memory_at_index!(domain_separator.0), "bb_ped_hash_in_size").unwrap();
+
+                                let output_ptr = get_memory_at_index!(output.0);
+
+                                builder.build_call(
+                                    pedersen_hash_func,
+                                    &[ inputs_gep.into(), inputs_size.into(), separator.into(), output_ptr.into() ],
+                                    "pedersen_hash_call",
+                                );
+                            },
+                            brillig::BlackBoxOp::PedersenCommitment { inputs, domain_separator, output } => {
+                                let inputs_ptr_ptr = get_memory_at_index!(inputs.pointer.0);
+                                let inputs_ptr = builder.build_load(i256_type, inputs_ptr_ptr, "bb_ped_commit_in_ptr").unwrap();
+                                let inputs_gep = get_memory_at_index_!(inputs_ptr.into_int_value());
+
+                                let inputs_size_ptr = get_memory_at_index!(inputs.size.0);
+                                let inputs_size = builder.build_load(i64_type, inputs_size_ptr, "bb_ped_commit_in_size").unwrap();
+
+                                let separator = builder.build_load(i64_type, get_memory_at_index!(domain_separator.0), "bb_ped_commit_in_size").unwrap();
+
+                                let output_ptr_ptr = get_memory_at_index!(output.pointer.0);
+                                let output_ptr = builder.build_load(i256_type, output_ptr_ptr, "bb_ped_commit_in_ptr").unwrap();
+                                let output_gep = get_memory_at_index_!(output_ptr.into_int_value());
+
+                                builder.build_call(
+                                    pedersen_commit_func,
+                                    &[ inputs_gep.into(), inputs_size.into(), separator.into(), output_gep.into() ],
+                                    "pedersen_commit_call",
+                                );
+                            },
+                            brillig::BlackBoxOp::AES128Encrypt { inputs, iv, key, outputs } => {
+                                let inputs_ptr_ptr = get_memory_at_index!(inputs.pointer.0);
+                                let inputs_ptr = builder.build_load(i256_type, inputs_ptr_ptr, "bb_aes_encrypt_in_ptr").unwrap();
+                                let inputs_gep = get_memory_at_index_!(inputs_ptr.into_int_value());
+
+                                let inputs_size_ptr = get_memory_at_index!(inputs.size.0);
+                                let inputs_size = builder.build_load(i64_type, inputs_size_ptr, "bb_aes_encrypt_in_size").unwrap();
+
+                                let iv_ptr_ptr = get_memory_at_index!(iv.pointer.0);
+                                let iv_ptr = builder.build_load(i256_type, iv_ptr_ptr, "bb_aes_encrypt_iv_ptr").unwrap();
+                                let iv_gep = get_memory_at_index_!(iv_ptr.into_int_value());
+
+                                let key_ptr_ptr = get_memory_at_index!(key.pointer.0);
+                                let key_ptr = builder.build_load(i256_type, key_ptr_ptr, "bb_aes_encrypt_key_ptr").unwrap();
+                                let key_gep = get_memory_at_index_!(key_ptr.into_int_value());
+
+                                let output_ptr_ptr = get_memory_at_index!(outputs.pointer.0);
+                                let output_ptr = builder.build_load(i256_type, output_ptr_ptr, "bb_aes_encrypt_out_ptr").unwrap();
+                                let output_gep = get_memory_at_index_!(output_ptr.into_int_value());
+
+                                let output_size_ptr = get_memory_at_index!(outputs.size.0);
+                                // let output_size_ptr_ptr = get_memory_at_index!(outputs.size.0);
+                                // let output_size_ptr = builder.build_load(i256_type, output_size_ptr_ptr, "bb_aes_encrypt_out_size_ptr").unwrap();
+                                // let output_size_gep = get_memory_at_index_!(output_size_ptr.into_int_value());
+
+                                builder.build_call(
+                                    aes_encrypt_func,
+                                    &[ inputs_gep.into(), iv_gep.into(), key_gep.into(), inputs_size.into(), output_gep.into(), output_size_ptr.into() ],
+                                    "aes_encrypt_call",
+                                );
+                            },
                             _ => unimplemented!("Unimplemented BlackBox: {:?}", op)
                         }
                     }
@@ -601,7 +716,50 @@ pub fn generate_llvm_ir(opcodes: &Vec<BrilligOpcode>, calldata_fields: &Vec<Fiel
                                     _ => unimplemented!("Unknown: {:?}", inputs[1]),
                                 };
                             }
-                            _ => eprintln!("Skipping ForeignCall: {:?}", function),
+                            _ => {
+                                let mut function = "foreign_call_".to_owned() + function;
+                                let mut args: Vec<BasicMetadataValueEnum> = Vec::new();
+                                let mut types: Vec<BasicMetadataTypeEnum> = Vec::new();
+
+                                let mut inputs = inputs.clone();
+                                inputs.pop();
+                                inputs.pop();
+                                // function += if inputs.len() > 0 { "_" } else { "" };
+
+                                for input in inputs.iter().chain(destinations.iter()) {
+                                    match input {
+                                        ValueOrArray::MemoryAddress(address) => {
+                                            args.push(get_memory_at_index!(address.0).into());
+                                            types.push(i64_ptr_type.into());
+                                            // function += "s";
+                                        }
+                                        ValueOrArray::HeapArray(array) => {
+                                            let ptr = builder.build_load(i64_type, get_memory_at_index!(array.pointer.0), "fc_arr_ptr").unwrap();
+                                            args.push(get_memory_at_index_!(ptr.into_int_value()).into());
+                                            args.push(i64_type.const_int(array.size as u64, false).into());
+                                            types.push(i64_ptr_type.into());
+                                            types.push(i64_type.into());
+                                            // function += "a";
+                                        },
+                                        ValueOrArray::HeapVector(vector) => {
+                                            args.push(get_memory_at_index!(vector.pointer.0).into());
+                                            let size_ptr = get_memory_at_index!(vector.size.0);
+                                            let size = builder.build_load(i64_type, size_ptr, "fc_heap_vec_size").unwrap();
+                                            args.push(size.into());
+                                            types.push(i64_ptr_type.into());
+                                            types.push(i64_type.into());
+                                            // function += "a";
+                                        },
+                                    }
+                                }
+
+                                let fn_type = context.void_type().fn_type(&types, false);
+                                let foreign_func = module.get_function(&function).unwrap_or_else(|| {
+                                    module.add_function(&function, fn_type, None) });
+                                builder.build_call(foreign_func, &args, "foreign_call_result");
+
+                            }
+                            // _ => eprintln!("Skipping ForeignCall: {:?}", function),
                         }
                     }
                     _ => unimplemented!("Unimplemented enum variant: {:?}", opcode),
