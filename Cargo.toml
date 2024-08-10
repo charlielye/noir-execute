@@ -7,13 +7,13 @@ license = "MIT"
 
 [dependencies]
 # local
-acvm = { path = "../noir/acvm-repo/acvm", features=["bn254"] }
-brillig = { path = "../noir/acvm-repo/brillig" }
-noirc_errors = { path = "../noir/compiler/noirc_errors" }
-noirc_driver = { path = "../noir/compiler/noirc_driver" }
-nargo_toml = { path = "../noir/tooling/nargo_toml" }
-nargo = { path = "../noir/tooling/nargo" }
-noirc_abi = { path = "../noir/tooling/noirc_abi" }
+acvm = { path = "../aztec-packages/noir/noir-repo/acvm-repo/acvm", features=["bn254"] }
+brillig = { path = "../aztec-packages/noir/noir-repo/acvm-repo/brillig" }
+noirc_errors = { path = "../aztec-packages/noir/noir-repo/compiler/noirc_errors" }
+noirc_driver = { path = "../aztec-packages/noir/noir-repo/compiler/noirc_driver" }
+nargo_toml = { path = "../aztec-packages/noir/noir-repo/tooling/nargo_toml" }
+nargo = { path = "../aztec-packages/noir/noir-repo/tooling/nargo" }
+noirc_abi = { path = "../aztec-packages/noir/noir-repo/tooling/noirc_abi" }
 # external
 inkwell = { git = "https://github.com/TheDan64/inkwell", branch = "master", features = ["llvm16-0"] }
 ark-ff = { version = "^0.4.0", default-features = false }

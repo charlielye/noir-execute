@@ -8,6 +8,7 @@ PACKAGES=${PACKAGES:-0}
 RUN=${RUN:-0}
 NARGO=${NARGO:-1}
 CARGO=${CARGO:-1}
+CARGO_DEBUG=${CARGO_DEBUG:-0}
 ASM=${ASM:-0}
 AVX=${ASM:-0}
 
@@ -20,14 +21,22 @@ if [ "$BB" -eq 1 ]; then
 fi
 
 if [ ! -d "$PROJECT_DIR/target" ] || [ "$NARGO" -eq 1 ]; then
-  (cd $PROJECT_DIR && rm -rf target && nargo compile --silence-warnings --force-brillig)
+  (cd $PROJECT_DIR && rm -rf target && ~/aztec-repos/aztec-packages/noir/noir-repo/target/release/nargo compile --silence-warnings --force-brillig)
 fi
 
-if [ ! -f target/release/noir-execute ] || [ "$CARGO" -eq 1 ]; then
-  cargo build --release
-fi
+if [ "$CARGO_DEBUG" -eq 1 ]; then
+  if [ ! -f target/debug/noir-execute ] || [ "$CARGO" -eq 1 ]; then
+    cargo build
+  fi
 
-./target/release/noir-execute -p $PROJECT_DIR $TARGS > program.ll
+  ./target/debug/noir-execute -p $PROJECT_DIR $TARGS --write-ll > program.ll
+else
+  if [ ! -f target/release/noir-execute ] || [ "$CARGO" -eq 1 ]; then
+    cargo build --release
+  fi
+
+  ./target/release/noir-execute -p $PROJECT_DIR $TARGS --write-ll > program.ll
+fi
 
 if [ -n "$ARCH" ]; then
   ARGS+=" -march=$ARCH"

@@ -27,7 +27,13 @@ pub(crate) struct RunArgs {
     workspace: bool,
 
     #[arg(long)]
-    ill_trap: bool,
+    pub ill_trap: bool,
+
+    #[arg(long)]
+    pub write_ll: bool,
+
+    #[arg(long, short)]
+    pub verbose: bool,
 }
 
 #[derive(Debug, Error)]
@@ -73,8 +79,7 @@ pub(crate) fn run(args: RunArgs) -> Result<(), RunError> {
         generate_program(
             program,
             package,
-            &args.prover_name,
-            args.ill_trap,
+            &args,
             None
             // args.oracle_resolver.as_deref(),
         )?;
@@ -109,13 +114,12 @@ pub(crate) fn read_program_from_file<P: AsRef<Path>>(
 fn generate_program(
   program: CompiledArtifact,
   package: &Package,
-  prover_name: &str,
-  ill_trap: bool,
+  run_args: &RunArgs,
   foreign_call_resolver_url: Option<&str>,
 ) -> Result<(), RunError> {
   // Parse the initial witness values from Prover.toml
   let (inputs_map, _) =
-      read_inputs_from_file(&package.root_dir, prover_name, Format::Toml, &program.abi)?;
+      read_inputs_from_file(&package.root_dir, &run_args.prover_name, Format::Toml, &program.abi)?;
 
   let initial_witness = program.abi.encode(&inputs_map, None)?;
   let calldata: Vec<_> = initial_witness.into_iter().map(|(_key, value)| value).collect();
@@ -124,7 +128,7 @@ fn generate_program(
   assert!(program.bytecode.unconstrained_functions.len() == 1);
 
   for function in &program.bytecode.unconstrained_functions {
-      generate_llvm_ir(&function.bytecode, &calldata, ill_trap);
+      generate_llvm_ir(&function.bytecode, &calldata, &run_args);
       // println!("");
       // for opcode in &function.bytecode {
       //     println!("{:?}", opcode);
