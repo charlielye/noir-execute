@@ -220,7 +220,7 @@ pub fn generate_llvm_ir(opcodes: &Vec<BrilligOpcode>, calldata_fields: &Vec<Fiel
     // Define heap (as 256 bit slots).
     // The heap isn't directly referenced, it's referenced via &memory.
     // This is just reserving the space.
-    let heap_size = 1024*1024; //*256*8; // 64GB for testing blob-lib.
+    let heap_size = 1024*1024*256;//*8; // 64GB for testing blob-lib.
     let heap_type = v256_type.array_type(heap_size);
     let heap_global = module.add_global(heap_type, Some(AddressSpace::default()), "heap");
     heap_global.set_alignment(32);
@@ -798,7 +798,8 @@ pub fn generate_llvm_ir(opcodes: &Vec<BrilligOpcode>, calldata_fields: &Vec<Fiel
 
     let write_start = Instant::now();
     if (run_args.write_ll) {
-        print!("{}", module.print_to_string().to_string());
+        let ll = module.print_to_string().to_string();
+        std::fs::write("program.ll", ll).expect("Failed to write ll file.");
         eprintln!("Write took: {:?}", write_start.elapsed());
     } else {
         // Compile directly to native binary without validation and writing to .ll file.
@@ -806,9 +807,9 @@ pub fn generate_llvm_ir(opcodes: &Vec<BrilligOpcode>, calldata_fields: &Vec<Fiel
         let target_triple = TargetTriple::create("x86_64-pc-linux-gnu");
         Target::initialize_native(&InitializationConfig::default()).expect("Failed to initialize native target");
         let target = Target::from_triple(&target_triple).unwrap();
-        let target_machine = target.create_target_machine(&target_triple, "generic", "", OptimizationLevel::None, RelocMode::PIC, CodeModel::Default).unwrap();
+        let target_machine = target.create_target_machine(&target_triple, "generic", "", OptimizationLevel::None, RelocMode::PIC, CodeModel::Large).unwrap();
         let obj_file = target_machine.write_to_memory_buffer(&module, FileType::Object).unwrap();
-        std::fs::write("output.o", obj_file.as_slice()).expect("Failed to write object file");
+        std::fs::write("program.o", obj_file.as_slice()).expect("Failed to write object file.");
         eprintln!("Compilation took: {:?}", write_start.elapsed());
     }
 
