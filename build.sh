@@ -27,7 +27,7 @@ if [ "$PACKAGES" -eq 1 ]; then
 fi
 
 if [ "$BB" -eq 1 ]; then
-  (cd ~/aztec-repos/barretenberg/cpp && cmake --preset $bb_preset -B $bb_dir && cmake --build $bb_dir --target libbarretenberg.a libenv.a)
+  (cd ~/aztec-repos/barretenberg/cpp && cmake --preset $bb_preset -B $bb_dir && cmake --build $bb_dir --target libecc.a libenv.a libcrypto.a)
 fi
 
 if [ ! -d "$PROJECT_DIR/target" ] || [ "$NARGO" -eq 1 ]; then
@@ -53,11 +53,12 @@ fi
 [ -n "$ARCH" ] && ARGS+=" -march=$ARCH"
 [ "$AVX" -eq 1 ] && ARGS+=" -mattr=+avx"
 
+libs="-lecc -lenv -lcrypto"
 if [ "$ASM" -eq 1 ]; then
   llc-16 -O$O $ARGS -filetype=asm -relocation-model=pic -o program.s program.ll
-  clang++ -O$O program.s -o program -L$HOME/aztec-repos/barretenberg/cpp/$bb_dir/lib -lbarretenberg -lenv
+  clang++ -O$O program.s -o program -L$HOME/aztec-repos/barretenberg/cpp/$bb_dir/lib $libs
 else
-  clang++ -O$O $ARGS program.o -o program -L$HOME/aztec-repos/barretenberg/cpp/$bb_dir/lib -lbarretenberg -lenv -Wno-override-module
+  clang++ -O$O $ARGS program.o -o program -L$HOME/aztec-repos/barretenberg/cpp/$bb_dir/lib -Wno-override-module $libs
 fi
 
 if [ "$RUN" -eq 1 ]; then

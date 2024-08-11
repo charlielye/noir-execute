@@ -180,10 +180,10 @@ pub fn generate_llvm_ir(opcodes: &Vec<BrilligOpcode>, calldata_fields: &Vec<Fiel
     let bn254_fr_leq = module.add_function("bn254_fr_leq", i1_type.fn_type(&[i64_ptr_type.into(), i64_ptr_type.into(), i64_ptr_type.into()], false), None);
     let bn254_fr_lt = module.add_function("bn254_fr_lt", i1_type.fn_type(&[i64_ptr_type.into(), i64_ptr_type.into(), i64_ptr_type.into()], false), None);
     let printf_func = module.add_function("printf", i32_type.fn_type(&[i8_ptr_type.into()], true), None);
-    let bb_printf_func = module.add_function("bb_printf", i32_type.fn_type(&[i8_ptr_type.into()], true), None);
     let print_fields_func = module.add_function("print_u256", context.void_type().fn_type(&[i64_ptr_type.into(), i64_type.into()], false), None);
     let to_radix_func = module.add_function("to_radix", context.void_type().fn_type(&[i64_ptr_type.into(), i64_ptr_type.into(), i64_type.into(), i64_type.into()], false), None);
     let sha256_func = module.add_function("blackbox_sha256", context.void_type().fn_type(&[i8_ptr_type.into(), i64_type.into(), i8_ptr_type.into()], false), None);
+    let keccak1600_func = module.add_function("blackbox_keccak1600", context.void_type().fn_type(&[i8_ptr_type.into(), i64_type.into(), i8_ptr_type.into()], false), None);
     let blake2s_func = module.add_function("blackbox_blake2s", context.void_type().fn_type(&[i8_ptr_type.into(), i64_type.into(), i8_ptr_type.into()], false), None);
     let blake3_func = module.add_function("blackbox_blake3", context.void_type().fn_type(&[i8_ptr_type.into(), i64_type.into(), i8_ptr_type.into()], false), None);
     let pedersen_hash_func = module.add_function("blackbox_pedersen_hash", context.void_type().fn_type(&[i8_ptr_type.into(), i64_type.into(), i64_type.into(), i8_ptr_type.into()], false), None);
@@ -192,9 +192,6 @@ pub fn generate_llvm_ir(opcodes: &Vec<BrilligOpcode>, calldata_fields: &Vec<Fiel
     let secp256k1_func = module.add_function("blackbox_secp256k1_verify_signature", context.void_type().fn_type(&[i64_ptr_type.into(), i64_type.into(), i64_ptr_type.into(), i64_ptr_type.into(), i64_ptr_type.into(), i64_ptr_type.into()], false), None);
     let secp256r1_func = module.add_function("blackbox_secp256r1_verify_signature", context.void_type().fn_type(&[i64_ptr_type.into(), i64_type.into(), i64_ptr_type.into(), i64_ptr_type.into(), i64_ptr_type.into(), i64_ptr_type.into()], false), None);
     let exit_fn = module.add_function("exit", context.void_type().fn_type(&[i32_type.into()], false), None);
-
-    let true_val = i1_type.const_int(1, false);
-    let false_val = i1_type.const_int(0, false);
 
     // Function signature for main
     let fn_type = i32_type.fn_type(&[], false);
@@ -220,7 +217,7 @@ pub fn generate_llvm_ir(opcodes: &Vec<BrilligOpcode>, calldata_fields: &Vec<Fiel
     // Define heap (as 256 bit slots).
     // The heap isn't directly referenced, it's referenced via &memory.
     // This is just reserving the space.
-    let heap_size = 1024*1024*256;//*8; // 64GB for testing blob-lib.
+    let heap_size = 1024*1024; //*256;//*8; // 64GB for testing blob-lib.
     let heap_type = v256_type.array_type(heap_size);
     let heap_global = module.add_global(heap_type, Some(AddressSpace::default()), "heap");
     heap_global.set_alignment(32);
@@ -607,6 +604,18 @@ pub fn generate_llvm_ir(opcodes: &Vec<BrilligOpcode>, calldata_fields: &Vec<Fiel
                                     "blake3_call",
                                 );
                             }
+                            brillig::BlackBoxOp::Keccakf1600 { message, output } => {
+                                let message_ptr = get_deref_memory_ptr_at_index!(message.pointer.0);
+                                let message_size_ptr = get_memory_ptr_at_index!(message.size.0);
+                                let message_size = builder.build_load(i64_type, message_size_ptr, "bb_keccak_msg_size").unwrap();
+                                let output_ptr = get_deref_memory_ptr_at_index!(output.pointer.0);
+
+                                builder.build_call(
+                                    keccak1600_func,
+                                    &[ message_ptr.into(), message_size.into(), output_ptr.into() ],
+                                    "keccak1600_call",
+                                );
+                            },
                             brillig::BlackBoxOp::Sha256 { message, output } => {
                                 let message_ptr_ptr = get_memory_ptr_at_index!(message.pointer.0);
                                 let message_ptr = builder.build_load(i256_type, message_ptr_ptr, "bb_sha_msg_ptr").unwrap();
