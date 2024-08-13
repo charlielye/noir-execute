@@ -214,21 +214,13 @@ pub fn generate_llvm_ir(opcodes: &Vec<BrilligOpcode>, calldata_fields: &Vec<Fiel
 
     // Define memory (as 256 bit slots).
     let memory_size = 2048*2*2*2*2; // 32k words, 1mb.
-    let memory_type = v256_type.array_type(memory_size);
+    let heap_size = 1024*1024*4*64;//*8; // 64GB for testing blob-lib (but breaks linker for some tests).
+    let combined_size = memory_size + heap_size;
+    let memory_type = v256_type.array_type(combined_size);
     let memory_global = module.add_global(memory_type, Some(AddressSpace::default()), "memory");
     memory_global.set_alignment(32);
-    memory_global.set_initializer(&v256_type.const_array(&vec![v256_type.const_zero(); memory_size as usize]));
+    memory_global.set_initializer(&memory_type.get_undef());
     let memory = memory_global.as_pointer_value();
-
-    // Define heap (as 256 bit slots).
-    // The heap isn't directly referenced, it's referenced via &memory.
-    // This is just reserving the space.
-    let heap_size = 1024*1024*4;//*64*8; // 64GB for testing blob-lib.
-    let heap_type = v256_type.array_type(heap_size);
-    let heap_global = module.add_global(heap_type, Some(AddressSpace::default()), "heap");
-    heap_global.set_alignment(32);
-    // TODO: We shouldn't need to do this surely.
-    heap_global.set_initializer(&v256_type.const_array(&vec![v256_type.const_zero(); heap_size as usize]));
 
     // Trap error string.
     let trap_str = builder.build_global_string_ptr("Trap triggered!\n", "str").unwrap().as_pointer_value();
@@ -880,7 +872,8 @@ pub fn generate_llvm_ir(opcodes: &Vec<BrilligOpcode>, calldata_fields: &Vec<Fiel
         let target_triple = TargetTriple::create("x86_64-pc-linux-gnu");
         Target::initialize_native(&InitializationConfig::default()).expect("Failed to initialize native target");
         let target = Target::from_triple(&target_triple).unwrap();
-        let target_machine = target.create_target_machine(&target_triple, "generic", "", OptimizationLevel::None, RelocMode::PIC, CodeModel::Large).unwrap();
+        let features = if run_args.avx { "+avx" } else { "" };
+        let target_machine = target.create_target_machine(&target_triple, "generic", features, OptimizationLevel::None, RelocMode::PIC, CodeModel::Large).unwrap();
         let obj_file = target_machine.write_to_memory_buffer(&module, FileType::Object).unwrap();
         std::fs::write("program.o", obj_file.as_slice()).expect("Failed to write object file.");
         eprintln!("Compilation took: {:?}", write_start.elapsed());

@@ -34,6 +34,9 @@ pub(crate) struct RunArgs {
 
     #[arg(long, short)]
     pub verbose: bool,
+
+    #[arg(long)]
+    pub avx: bool,
 }
 
 #[derive(Debug, Error)]
