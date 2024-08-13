@@ -10,10 +10,11 @@ NARGO=${NARGO:-1}
 CARGO=${CARGO:-1}
 CARGO_DEBUG=${CARGO_DEBUG:-0}
 ASM=${ASM:-0}
-AVX=${ASM:-0}
+AVX=${AVX:-0}
 BB_DEBUG=${BB_DEBUG:-0}
 VERBOSE=${VERBOSE:-0}
 TRAP=${TRAP:-0}
+EXE=${EXE:-1}
 
 bb_dir=build
 bb_preset=clang16
@@ -63,9 +64,9 @@ fi
 libs="-lecc -lenv -lcrypto -lcommon -lnumeric"
 if [ "$ASM" -eq 1 ]; then
   llc-16 -O$O $ARGS -filetype=asm -relocation-model=pic -o program.s program.ll
-  clang++ -O$O program.s -o program -L$HOME/aztec-repos/barretenberg/cpp/$bb_dir/lib $libs
+  [ "$EXE" -eq 1 ] && clang++ -O$O program.s -o program -L$HOME/aztec-repos/barretenberg/cpp/$bb_dir/lib $libs
 else
-  clang++ -O$O $ARGS program.o -o program -L$HOME/aztec-repos/barretenberg/cpp/$bb_dir/lib -Wno-override-module $libs
+  clang++ -O$O program.o -o program -L$HOME/aztec-repos/barretenberg/cpp/$bb_dir/lib -Wno-override-module $libs
 fi
 
 # If requested, run the program and time it.
