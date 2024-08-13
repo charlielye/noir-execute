@@ -7,6 +7,7 @@ use base64::write;
 use brillig::BinaryFieldOp;
 use brillig::BinaryIntOp;
 use brillig::BitSize;
+use brillig::BlackBoxOp;
 use brillig::HeapArray;
 use brillig::IntegerBitSize;
 use brillig::MemoryAddress;
@@ -183,6 +184,7 @@ pub fn generate_llvm_ir(opcodes: &Vec<BrilligOpcode>, calldata_fields: &Vec<Fiel
     let print_fields_func = module.add_function("print_u256", context.void_type().fn_type(&[i64_ptr_type.into(), i64_type.into()], false), None);
     let to_radix_func = module.add_function("to_radix", context.void_type().fn_type(&[i64_ptr_type.into(), i64_ptr_type.into(), i64_type.into(), i64_type.into()], false), None);
     let sha256_func = module.add_function("blackbox_sha256", context.void_type().fn_type(&[i8_ptr_type.into(), i64_type.into(), i8_ptr_type.into()], false), None);
+    let sha256_compression_func = module.add_function("blackbox_sha256_compression", context.void_type().fn_type(&[i64_ptr_type.into(), i64_ptr_type.into(), i64_ptr_type.into()], false), None);
     let keccak1600_func = module.add_function("blackbox_keccak1600", context.void_type().fn_type(&[i8_ptr_type.into(), i64_type.into(), i8_ptr_type.into()], false), None);
     let blake2s_func = module.add_function("blackbox_blake2s", context.void_type().fn_type(&[i8_ptr_type.into(), i64_type.into(), i8_ptr_type.into()], false), None);
     let blake3_func = module.add_function("blackbox_blake3", context.void_type().fn_type(&[i8_ptr_type.into(), i64_type.into(), i8_ptr_type.into()], false), None);
@@ -191,6 +193,10 @@ pub fn generate_llvm_ir(opcodes: &Vec<BrilligOpcode>, calldata_fields: &Vec<Fiel
     let aes_encrypt_func = module.add_function("blackbox_aes_encrypt", context.void_type().fn_type(&[i64_ptr_type.into(), i64_ptr_type.into(), i64_ptr_type.into(), i64_type.into(), i64_ptr_type.into(), i64_ptr_type.into()], false), None);
     let secp256k1_func = module.add_function("blackbox_secp256k1_verify_signature", context.void_type().fn_type(&[i64_ptr_type.into(), i64_type.into(), i64_ptr_type.into(), i64_ptr_type.into(), i64_ptr_type.into(), i64_ptr_type.into()], false), None);
     let secp256r1_func = module.add_function("blackbox_secp256r1_verify_signature", context.void_type().fn_type(&[i64_ptr_type.into(), i64_type.into(), i64_ptr_type.into(), i64_ptr_type.into(), i64_ptr_type.into(), i64_ptr_type.into()], false), None);
+    let schnorr_verify_func = module.add_function("blackbox_schnorr_verify_signature", context.void_type().fn_type(&[i64_ptr_type.into(), i64_type.into(), i64_ptr_type.into(), i64_ptr_type.into(), i64_ptr_type.into(), i64_ptr_type.into()], false), None);
+    let poseidon2_perm_func = module.add_function("blackbox_poseidon2_permutation", context.void_type().fn_type(&[i64_ptr_type.into(), i64_ptr_type.into(), i64_type.into()], false), None);
+    let msm_func = module.add_function("blackbox_msm", context.void_type().fn_type(&[i64_ptr_type.into(), i64_type.into(), i64_ptr_type.into(), i64_ptr_type.into()], false), None);
+    let ecc_add_func = module.add_function("blackbox_ecc_add", context.void_type().fn_type(&[i64_ptr_type.into(), i64_ptr_type.into(), i64_ptr_type.into(), i64_ptr_type.into(), i64_ptr_type.into(), i64_ptr_type.into(), i64_ptr_type.into()], false), None);
     let exit_fn = module.add_function("exit", context.void_type().fn_type(&[i32_type.into()], false), None);
 
     // Function signature for main
@@ -217,7 +223,7 @@ pub fn generate_llvm_ir(opcodes: &Vec<BrilligOpcode>, calldata_fields: &Vec<Fiel
     // Define heap (as 256 bit slots).
     // The heap isn't directly referenced, it's referenced via &memory.
     // This is just reserving the space.
-    let heap_size = 1024*1024; //*256;//*8; // 64GB for testing blob-lib.
+    let heap_size = 1024*1024*4;//*64*8; // 64GB for testing blob-lib.
     let heap_type = v256_type.array_type(heap_size);
     let heap_global = module.add_global(heap_type, Some(AddressSpace::default()), "heap");
     heap_global.set_alignment(32);
@@ -400,8 +406,6 @@ pub fn generate_llvm_ir(opcodes: &Vec<BrilligOpcode>, calldata_fields: &Vec<Fiel
                         let lhs_ptr = get_memory_ptr_at_index!(lhs_index);
                         let rhs_ptr = get_memory_ptr_at_index!(rhs_index);
                         let result_ptr = get_memory_ptr_at_index!(result_index);
-
-                        // mov_is_int!(lhs_index, result_index);
 
                         match op {
                             BinaryFieldOp::Add => {
@@ -617,23 +621,40 @@ pub fn generate_llvm_ir(opcodes: &Vec<BrilligOpcode>, calldata_fields: &Vec<Fiel
                                 );
                             },
                             brillig::BlackBoxOp::Sha256 { message, output } => {
-                                let message_ptr_ptr = get_memory_ptr_at_index!(message.pointer.0);
-                                let message_ptr = builder.build_load(i256_type, message_ptr_ptr, "bb_sha_msg_ptr").unwrap();
-                                let message_gep = get_memory_ptr_at_index_obj!(message_ptr.into_int_value());
-
+                                let message_ptr = get_deref_memory_ptr_at_index!(message.pointer.0);
                                 let message_size_ptr = get_memory_ptr_at_index!(message.size.0);
                                 let message_size = builder.build_load(i64_type, message_size_ptr, "bb_sha_msg_size").unwrap();
-
-                                let output_ptr_ptr = get_memory_ptr_at_index!(output.pointer.0);
-                                let output_ptr = builder.build_load(i256_type, output_ptr_ptr, "bb_sha_out_ptr").unwrap();
-                                let output_gep = get_memory_ptr_at_index_obj!(output_ptr.into_int_value());
+                                let output_ptr = get_deref_memory_ptr_at_index!(output.pointer.0);
 
                                 builder.build_call(
                                     sha256_func,
-                                    &[ message_gep.into(), message_size.into(), output_gep.into() ],
+                                    &[ message_ptr.into(), message_size.into(), output_ptr.into() ],
                                     "sha256_call",
                                 );
                             },
+                            brillig::BlackBoxOp::Sha256Compression { input, hash_values, output } => {
+                                let input_ptr = get_deref_memory_ptr_at_index!(input.pointer.0);
+                                let hash_values_ptr = get_deref_memory_ptr_at_index!(hash_values.pointer.0);
+                                let output_ptr = get_deref_memory_ptr_at_index!(output.pointer.0);
+
+                                builder.build_call(
+                                    sha256_compression_func,
+                                    &[ input_ptr.into(), hash_values_ptr.into(), output_ptr.into() ],
+                                    "sha256_compression_call",
+                                );
+                            },
+                            brillig::BlackBoxOp::Poseidon2Permutation { message, output, len } => {
+                                let input_ptr = get_deref_memory_ptr_at_index!(message.pointer.0);
+                                let message_size_ptr = get_memory_ptr_at_index!(message.size.0);
+                                let message_size = builder.build_load(i64_type, message_size_ptr, "bb_sha_msg_size").unwrap();
+                                let output_ptr = get_deref_memory_ptr_at_index!(output.pointer.0);
+
+                                builder.build_call(
+                                    poseidon2_perm_func,
+                                    &[ input_ptr.into(), output_ptr.into(), message_size.into() ],
+                                    "poseidon2_perm_call",
+                                );
+                            }
                             brillig::BlackBoxOp::PedersenHash { inputs, domain_separator, output } => {
                                 let inputs_ptr_ptr = get_memory_ptr_at_index!(inputs.pointer.0);
                                 let inputs_ptr = builder.build_load(i256_type, inputs_ptr_ptr, "bb_ped_hash_in_ptr").unwrap();
@@ -699,7 +720,7 @@ pub fn generate_llvm_ir(opcodes: &Vec<BrilligOpcode>, calldata_fields: &Vec<Fiel
                             brillig::BlackBoxOp::EcdsaSecp256k1 { hashed_msg, public_key_x, public_key_y, signature, result } => {
                                 let message_ptr = get_deref_memory_ptr_at_index!(hashed_msg.pointer.0);
                                 let message_size_ptr = get_memory_ptr_at_index!(hashed_msg.size.0);
-                                let message_size = builder.build_load(i64_type, message_size_ptr, "bb_sha_msg_size").unwrap();
+                                let message_size = builder.build_load(i64_type, message_size_ptr, "bb_secp256_msg_size").unwrap();
                                 let x_ptr = get_deref_memory_ptr_at_index!(public_key_x.pointer.0);
                                 let y_ptr = get_deref_memory_ptr_at_index!(public_key_y.pointer.0);
                                 let sig_ptr = get_deref_memory_ptr_at_index!(signature.pointer.0);
@@ -709,6 +730,49 @@ pub fn generate_llvm_ir(opcodes: &Vec<BrilligOpcode>, calldata_fields: &Vec<Fiel
                                     if matches!(op, brillig::BlackBoxOp::EcdsaSecp256k1 { .. }) { secp256k1_func } else { secp256r1_func },
                                     &[ message_ptr.into(), message_size.into(), x_ptr.into(), y_ptr.into(), sig_ptr.into(), result_ptr.into() ],
                                     "secp256_call",
+                                );
+                            },
+                            brillig::BlackBoxOp::SchnorrVerify { public_key_x, public_key_y, message, signature, result } => {
+                                let message_ptr = get_deref_memory_ptr_at_index!(message.pointer.0);
+                                let message_size_ptr = get_memory_ptr_at_index!(message.size.0);
+                                let message_size = builder.build_load(i64_type, message_size_ptr, "bb_schnorr_msg_size").unwrap();
+                                let x_ptr = get_memory_ptr_at_index!(public_key_x.0);
+                                let y_ptr = get_memory_ptr_at_index!(public_key_y.0);
+                                let sig_ptr = get_deref_memory_ptr_at_index!(signature.pointer.0);
+                                let result_ptr = get_memory_ptr_at_index!(result.0);
+
+                                builder.build_call(
+                                    schnorr_verify_func,
+                                    &[ message_ptr.into(), message_size.into(), x_ptr.into(), y_ptr.into(), sig_ptr.into(), result_ptr.into() ],
+                                    "schnorr_verify_call",
+                                );
+                            },
+                            brillig::BlackBoxOp::MultiScalarMul { points, scalars, outputs } => {
+                                let points_ptr = get_deref_memory_ptr_at_index!(points.pointer.0);
+                                let points_size_ptr = get_memory_ptr_at_index!(points.size.0);
+                                let points_size = builder.build_load(i64_type, points_size_ptr, "bb_points_size").unwrap();
+                                let scalars = get_deref_memory_ptr_at_index!(scalars.pointer.0);
+                                let result_ptr = get_deref_memory_ptr_at_index!(outputs.pointer.0);
+
+                                builder.build_call(
+                                    msm_func,
+                                    &[ points_ptr.into(), points_size.into(), scalars.into(), result_ptr.into() ],
+                                    "msm_call",
+                                );
+                            },
+                            brillig::BlackBoxOp::EmbeddedCurveAdd { input1_x, input1_y, input1_infinite, input2_x, input2_y, input2_infinite, result } => {
+                                let x1_ptr = get_memory_ptr_at_index!(input1_x.0);
+                                let y1_ptr = get_memory_ptr_at_index!(input1_y.0);
+                                let i1_ptr = get_memory_ptr_at_index!(input1_infinite.0);
+                                let x2_ptr = get_memory_ptr_at_index!(input2_x.0);
+                                let y2_ptr = get_memory_ptr_at_index!(input2_y.0);
+                                let i2_ptr = get_memory_ptr_at_index!(input2_infinite.0);
+                                let result_ptr = get_deref_memory_ptr_at_index!(result.pointer.0);
+
+                                builder.build_call(
+                                    ecc_add_func,
+                                    &[ x1_ptr.into(), y1_ptr.into(), i1_ptr.into(), x2_ptr.into(), y2_ptr.into(), i2_ptr.into(), result_ptr.into()],
+                                    "ecc_add_call",
                                 );
                             },
                             _ => unimplemented!("Unimplemented BlackBox: {:?}", op)
