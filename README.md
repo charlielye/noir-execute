@@ -54,7 +54,7 @@ Ostensibly there would be nothing stopping the rust vm achieving similar perform
 In other words, the actual program logic here (a tight loop) is negligible.
 
 Further, this is with `-O0`, things only get far worse with higher levels, so much so I didn't bother waiting.
-I may have waiting one time and it made no practical difference.
+I may have waited one time and it made no practical difference.
 
 # Profiling
 
@@ -125,3 +125,4 @@ However it was a good way to learn the Brillig opcodes, VM implementation, and a
 - Opcode generation improvements. We already have work underway to reduce the amount of bytecode output, and this will
   make it easier to publish contracts on-chain, but won't reduce the execution trace.
   Mem2Reg improvements will hopefully make a big difference.
+- I guess you could target `ARCH=riscv64` and put the result through risc-zero? 🤔
