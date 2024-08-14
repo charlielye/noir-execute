@@ -24,7 +24,7 @@ On with some numbers.
 
 # Measurements
 
-This whole thing was kicked off when Mikes (blob-lib)[https://github.com/iAmMichaelConnor/blob-lib] was revealed to take
+This whole thing was kicked off when Mikes [blob-lib](https://github.com/iAmMichaelConnor/blob-lib) was revealed to take
 "an hour to compile". By compile it's possible he meant "run a test", which combines compilation and execution.
 Since then improvements have been made:
 
