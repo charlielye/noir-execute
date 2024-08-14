@@ -73,21 +73,21 @@ The paths to update would be to `aztec-packages/noir/noir-repo`, and the barrete
 
 Take a look at `./build.sh` for how to run a single project. It has a bunch of env vars you can set to control things.
 
-| Env Var = Default | Description                                                                                   |
-| ----------------- | --------------------------------------------------------------------------------------------- |
-| `O=0`             | The optimisation level passed to the compiler (currently only when with `ASM=1`).             |
-| `BB=0`            | Wether to build barretenberg first. Useful when iterating on barretenberg code.               |
-| `BB_DEBUG=0`      | Enable to use debug build of barretenberg.                                                    |
-| `PACKAGES=0`      | Wether to attempt to install required packages. Assumes ubuntu.                               |
-| `RUN=0`           | Enable to run the program through `time` after compiling.                                     |
-| `NARGO=1`         | Disable to prevent recompilation of the noir project (unless no artifact exists).             |
-| `CARGO=1`         | Disable to prevent recompilation of the transpiler (unless no exe exists).                    |
-| `CARGO_DEBUG=0`   | Enable to use a debug build of the transpiler.                                                |
-| `ASM=0`           | Enable to output intermediary `.ll` and `.s` files for inspection.                            |
-| `AVX=0`           | Enable AVX on x86. Produces less bytecode, slightly more performant in theory.                |
-| `VERBOSE=0`       | Enable to print every opcode with opcode, function and basic-block id.                        |
-| `TRAP=0`          | Trigger an illegal instruction on failed assertions, rather than `exit(1)`. Helps debugging.  |
-| `EXE=1`           | Link to create the executable when `ASM=1`. Disable if targetting another arch e.g. `risv64`. |
+| Env Var = Default | Description                                                                                    |
+| ----------------- | ---------------------------------------------------------------------------------------------- |
+| `O=0`             | The optimisation level passed to the compiler (currently only when with `ASM=1`).              |
+| `BB=0`            | Wether to build barretenberg first. Useful when iterating on barretenberg code.                |
+| `BB_DEBUG=0`      | Enable to use debug build of barretenberg.                                                     |
+| `PACKAGES=0`      | Wether to attempt to install required packages. Assumes ubuntu.                                |
+| `RUN=0`           | Enable to run the program through `time` after compiling.                                      |
+| `NARGO=1`         | Disable to prevent recompilation of the noir project (unless no artifact exists).              |
+| `CARGO=1`         | Disable to prevent recompilation of the transpiler (unless no exe exists).                     |
+| `CARGO_DEBUG=0`   | Enable to use a debug build of the transpiler.                                                 |
+| `ASM=0`           | Enable to output intermediary `.ll` and `.s` files for inspection.                             |
+| `AVX=0`           | Enable AVX on x86. Produces less bytecode, slightly more performant in theory.                 |
+| `VERBOSE=0`       | Enable to print every opcode with opcode, function and basic-block id.                         |
+| `TRAP=0`          | Trigger an illegal instruction on failed assertions, rather than `exit(1)`. Helps debugging.   |
+| `EXE=1`           | Link to create the executable when `ASM=1`. Disable if targetting another arch e.g. `riscv64`. |
 
 Example:
 
