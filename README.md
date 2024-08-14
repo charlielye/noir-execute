@@ -75,6 +75,7 @@ Take a look at `./build.sh` for how to run a single project. It has a bunch of e
 
 | Env Var = Default | Description                                                                                    |
 | ----------------- | ---------------------------------------------------------------------------------------------- |
+| `ARCH=<host>`     | Target architecture, e.g. `riscv64` (currently only when with `ASM=1`).                        |
 | `O=0`             | The optimisation level passed to the compiler (currently only when with `ASM=1`).              |
 | `BB=0`            | Wether to build barretenberg first. Useful when iterating on barretenberg code.                |
 | `BB_DEBUG=0`      | Enable to use debug build of barretenberg.                                                     |
