@@ -64,7 +64,8 @@ fi
 libs="-lecc -lenv -lcrypto -lcommon -lnumeric"
 if [ "$ASM" -eq 1 ]; then
   llc-16 -O$O $ARGS -filetype=asm -relocation-model=pic -o program.s program.ll
-  [ "$EXE" -eq 1 ] && clang++ -O$O program.s -o program -L$HOME/aztec-repos/barretenberg/cpp/$bb_dir/lib $libs
+  [ "$EXE" -eq 1 ] && clang -O$O -c program.s -o program.o
+  [ "$EXE" -eq 1 ] && clang++ -O$O program.o -o program -L$HOME/aztec-repos/barretenberg/cpp/$bb_dir/lib $libs
 else
   clang++ -O$O program.o -o program -L$HOME/aztec-repos/barretenberg/cpp/$bb_dir/lib -Wno-override-module $libs
 fi

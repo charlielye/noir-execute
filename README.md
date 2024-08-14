@@ -7,7 +7,7 @@ The TLDR is that it does. Kind of. Sometimes. But for reasons largely independen
 We could take some learnings from this experiment and get most of the benefits in the rust Brillig execution VM with none of the downsides.
 
 It also makes it quite clear that the real problem is poor Brillig bytecode generation in certain edge cases, rather than a slow execution engine.
-The majority of interesting execution time for many programs will likely be in blackboxes, field arithmetic etc.
+The majority of interesting execution time for many programs will likely be in blackboxes, field arithmetic, foreign calls, oracles etc.
 
 This _may_ have some use in the future, as some kind of AVM JIT transpiler for super-fast public function execution, if we're pushing limits.
 
@@ -35,6 +35,9 @@ Since then improvements have been made:
 In aggregate these have got the `test_barycentric` run down to about 3m.
 I modifed nargo to output the precise time executing so as to not conflate with compilation (which is pretty fast in all cases).
 For native times with a `*` I subtracted 1500us (1.5ms) as that seems to be the overhead of running an empty program.
+
+🤢 Implies we're far worse off in terms of time when factoring in compliation time.
+In other words it would only provide a practical benefit if being re-executed over and over.
 
 | Project         | Compressed Brillig | Uncompressed Brillig | `noir execute` time | x86 Time  | Speedup | x86 Compile Time | x86 Size Uncompressed |
 | --------------- | ------------------ | -------------------- | ------------------- | --------- | ------- | ---------------- | --------------------- |
@@ -68,6 +71,28 @@ I'm unsure if the 30% time spent in `to_radix` can be improved upon, or if that 
 You can can meddle with the paths in `./run-tests.sh` to have it run a directory of projects (e.g. execution-success).
 Or take a look at `./build.sh` for how to run a single project. It has a bunch of env vars you can set to control things.
 
+| Env Var = Default | Description                                                                                   |
+| ----------------- | --------------------------------------------------------------------------------------------- |
+| `O=0`             | The optimisation level passed to the compiler (currently only when with `ASM=1`).             |
+| `BB=0`            | Wether to build barretenberg first. Useful when iterating on barretenberg code.               |
+| `BB_DEBUG=0`      | Enable to use debug build of barretenberg.                                                    |
+| `PACKAGES=0`      | Wether to attempt to install required packages. Assumes ubuntu.                               |
+| `RUN=0`           | Enable to run the program through `time` after compiling.                                     |
+| `NARGO=1`         | Disable to prevent recompilation of the noir project (unless no artifact exists).             |
+| `CARGO=1`         | Disable to prevent recompilation of the transpiler (unless no exe exists).                    |
+| `CARGO_DEBUG=0`   | Enable to use a debug build of the transpiler.                                                |
+| `ASM=0`           | Enable to output intermediary `.ll` and `.s` files for inspection.                            |
+| `AVX=0`           | Enable AVX on x86. Produces less bytecode, slightly more performant in theory.                |
+| `VERBOSE=0`       | Enable to print every opcode with opcode, function and basic-block id.                        |
+| `TRAP=0`          | Trigger an illegal instruction on failed assertions, rather than `exit(1)`. Helps debugging.  |
+| `EXE=1`           | Link to create the executable when `ASM=1`. Disable if targetting another arch e.g. `risv64`. |
+
+Example:
+
+```
+TRAP=1 AVX=1 ASM=1 RUN=1 ./build.sh ~/aztec-repos/aztec-packages/noir/noir-repo/test_programs/execution_success/1_mul
+```
+
 # SSA to LLVM IR
 
 It maybe possible to get better bytecode by going direct from the SSA to the IR.
@@ -76,8 +101,25 @@ This may however be no different to improving the SSA and Brillig codegen.
 
 # Bugs
 
-Probably loads. But it does run all the noir `execution-success` tests successfully (with a couple of uninteresting exceptions).
+Probably. But it does run all the noir `execution-success` tests successfully (with a couple of uninteresting exceptions).
+As per `./run-tests.sh`:
 
-# Was this really necessary?
+```
+# regression_4709: Produces so much bytecode it's too slow to wait for.
+# is_unconstrained: Fails because it expects main to be constrained, but we force all programs to be unconstrained.
+# brillig_oracle: Requires advanced foreign function support to handle mocking.
+# bigint: Might need to implement blackbox support. Although maybe bignum lib is the future.
+```
 
-No, but it was a good way to learn the Brillig opcode, VM implementation, and a bit about LLVM IR.
+# Conclusion
+
+The result is not particularly helpful for us at this stage, and the outcome is somewhat unsurprising.
+However it was a good way to learn the Brillig opcodes, VM implementation, and a bit about LLVM IR.
+
+- We should focus on removing as many of the heap allocations as is reasonable from the rust VM critical path.
+  I think the `ToRadix` handler might be what takes 40% of the time (or is at least contributing).
+  This may matter less with other improvements to opcode generation, but any heap allocations should be unnecessary,
+  perhaps with exception of some blackboxes.
+- Opcode generation improvements. We already have work underway to reduce the amount of bytecode output, and this will
+  make it easier to publish contracts on-chain, but won't reduce the execution trace.
+  Mem2Reg improvements will hopefully make a big difference.
