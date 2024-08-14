@@ -69,7 +69,9 @@ I'm unsure if the 30% time spent in `to_radix` can be improved upon, or if that 
 # Usage
 
 You can can meddle with the paths in `./run-tests.sh` to have it run a directory of projects (e.g. execution-success).
-Or take a look at `./build.sh` for how to run a single project. It has a bunch of env vars you can set to control things.
+The paths to update would be to `aztec-packages/noir/noir-repo`, and the barretenberg branch `cl/spike-binds`.
+
+Take a look at `./build.sh` for how to run a single project. It has a bunch of env vars you can set to control things.
 
 | Env Var = Default | Description                                                                                   |
 | ----------------- | --------------------------------------------------------------------------------------------- |
