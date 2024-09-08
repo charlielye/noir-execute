@@ -59,10 +59,18 @@ use crate::run::RunArgs;
 
 type BrilligOpcode = brillig::Opcode<FieldElement>;
 
-fn field_element_to_u64_limbs(fe: FieldElement) -> [u64; 4] {
-        let arkfe: ark_bn254::Fr = fe.into_repr();
+fn field_element_to_u64_limbs(fe: FieldElement, as_field: bool) -> [u64; 4] {
+    let arkfe: ark_bn254::Fr = fe.into_repr();
+    if (as_field) {
+        let big_int: BigInt<4> = arkfe.0;
+        let mut limbs = big_int.0;
+        // Set the high bit of the most significant limb to signify montgomery form.
+        limbs[3] |= 1 << 63;
+        return limbs;
+    } else {
         let big_int: BigInt<4> = arkfe.into();
-        big_int.0
+        return big_int.0;
+    }
 }
 
 fn disassemble_brillig(opcodes: &Vec<BrilligOpcode>) -> BTreeMap<usize, BTreeMap<usize, Vec<BrilligOpcode>>> {
@@ -169,7 +177,10 @@ pub fn generate_llvm_ir(opcodes: &Vec<BrilligOpcode>, calldata_fields: &Vec<Fiel
     let i8_ptr_type = i8_type.ptr_type(AddressSpace::default());
     let i64_ptr_type = i64_type.ptr_type(AddressSpace::default());
     let i256_ptr_type = i256_type.ptr_type(AddressSpace::default());
+
+    // Turns out at least in tight mul test, int is better than vec?
     let v256_type = i64_type.vec_type(4);
+    // let v256_type = context.custom_width_int_type(256);
 
     // Declare external functions
     let bn254_fr_normalize = module.add_function("bn254_fr_normalize", context.void_type().fn_type(&[i64_ptr_type.into()], false), None);
@@ -209,12 +220,14 @@ pub fn generate_llvm_ir(opcodes: &Vec<BrilligOpcode>, calldata_fields: &Vec<Fiel
     let calldata_type = i256_type.array_type(calldata_fields.len() as u32);
     let calldata = module.add_global(calldata_type, Some(AddressSpace::default()), "calldata");
     calldata.set_alignment(32);
-    let cd = calldata_fields.iter().map(|&f| i256_type.const_int_arbitrary_precision(&field_element_to_u64_limbs(f))).collect::<Vec<IntValue>>();
+    let cd = calldata_fields.iter().map(|&f| i256_type.const_int_arbitrary_precision(&field_element_to_u64_limbs(f, true))).collect::<Vec<IntValue>>();
     calldata.set_initializer(&i256_type.const_array(&cd));
 
     // Define memory (as 256 bit slots).
-    let memory_size = 2048*2*2*2*2; // 32k words, 1mb.
-    let heap_size = 1024*1024*4*64;//*8; // 64GB for testing blob-lib (but breaks linker for some tests).
+    let memory_size = 2048; // 32k words, 1mb.
+    let heap_size = 1024*1024*4;//*64;//*8; // 64GB for testing blob-lib (but breaks linker for some tests).
+    // 3MiB L1d cache.
+    // let heap_size = ((1<<20) * 3) / 32 - memory_size;
     let combined_size = memory_size + heap_size;
     let memory_type = v256_type.array_type(combined_size);
     let memory_global = module.add_global(memory_type, Some(AddressSpace::default()), "memory");
@@ -292,11 +305,18 @@ pub fn generate_llvm_ir(opcodes: &Vec<BrilligOpcode>, calldata_fields: &Vec<Fiel
 
                 match opcode {
                     BrilligOpcode::Const { destination, bit_size, value } => {
-                        let limbs = field_element_to_u64_limbs(*value);
+                        let limbs = field_element_to_u64_limbs(*value, *bit_size == BitSize::Field);
                         let const_val = VectorType::const_vector(&limbs.iter().map(|&x| i64_type.const_int(x as u64, false)).collect::<Vec<_>>());
+                        // let const_val = i256_type.const_int_arbitrary_precision(&limbs);
 
                         let dest_index = destination.0;
                         let dest_ptr = get_memory_ptr_at_index!(dest_index);
+                        builder.build_store(dest_ptr, const_val).unwrap().set_alignment(32);
+                    }
+                    BrilligOpcode::IndirectConst { destination_pointer, bit_size, value } => {
+                        let limbs = field_element_to_u64_limbs(*value, *bit_size == BitSize::Field);
+                        let const_val = VectorType::const_vector(&limbs.iter().map(|&x| i64_type.const_int(x as u64, false)).collect::<Vec<_>>());
+                        let dest_ptr = get_deref_memory_ptr_at_index!(destination_pointer.0);
                         builder.build_store(dest_ptr, const_val).unwrap().set_alignment(32);
                     }
                     BrilligOpcode::CalldataCopy { destination_address, size, offset } => {
@@ -335,6 +355,7 @@ pub fn generate_llvm_ir(opcodes: &Vec<BrilligOpcode>, calldata_fields: &Vec<Fiel
                         let src_ptr = get_memory_ptr_at_index!(src_index);
                         let dest_ptr = get_memory_ptr_at_index!(dest_index);
                         let value = builder.build_load(v256_type, src_ptr, "mov_val").unwrap();
+                        value.as_instruction_value().unwrap().set_alignment(32);
                         builder.build_store(dest_ptr, value).unwrap().set_alignment(32);
                     }
                     BrilligOpcode::Cast { destination, source, bit_size } => {
@@ -563,7 +584,7 @@ pub fn generate_llvm_ir(opcodes: &Vec<BrilligOpcode>, calldata_fields: &Vec<Fiel
                     }
                     BrilligOpcode::BlackBox(op) => {
                         match op {
-                            brillig::BlackBoxOp::ToRadix { input, radix, output } => {
+                            brillig::BlackBoxOp::ToRadix { input, radix, output, output_bits } => {
                                 let input_ptr = get_memory_ptr_at_index!(input.0);
                                 let output_ptr_ptr = get_memory_ptr_at_index!(output.pointer.0);
                                 let output_ptr = builder.build_load(i256_type, output_ptr_ptr, "bb_tr_out_ptr").unwrap();
@@ -638,7 +659,7 @@ pub fn generate_llvm_ir(opcodes: &Vec<BrilligOpcode>, calldata_fields: &Vec<Fiel
                             brillig::BlackBoxOp::Poseidon2Permutation { message, output, len } => {
                                 let input_ptr = get_deref_memory_ptr_at_index!(message.pointer.0);
                                 let message_size_ptr = get_memory_ptr_at_index!(message.size.0);
-                                let message_size = builder.build_load(i64_type, message_size_ptr, "bb_sha_msg_size").unwrap();
+                                let message_size = builder.build_load(i64_type, message_size_ptr, "bb_pos_msg_size").unwrap();
                                 let output_ptr = get_deref_memory_ptr_at_index!(output.pointer.0);
 
                                 builder.build_call(

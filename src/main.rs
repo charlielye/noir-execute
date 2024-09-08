@@ -28,6 +28,7 @@ use std::mem;
 use std::path::Path;
 use std::path::PathBuf;
 use std::time::Instant;
+use std::process;
 use ark_ff::BigInt;
 
 use inkwell::context::Context;
@@ -56,6 +57,9 @@ fn main() {
 
     match result {
         Ok(_) => {},
-        Err(e) => eprintln!("Error: {:?}", e),
+        Err(e) => {
+            eprintln!("Error: {:?}", e);
+            process::exit(1);
+        },
     }
 }
