@@ -225,7 +225,7 @@ pub fn generate_llvm_ir(opcodes: &Vec<BrilligOpcode>, calldata_fields: &Vec<Fiel
 
     // Define memory (as 256 bit slots).
     let memory_size = 2048; // 32k words, 1mb.
-    let heap_size = 1024*1024*4;//*64;//*8; // 64GB for testing blob-lib (but breaks linker for some tests).
+    let heap_size = 1024*1024*8;//*64;//*8; // 64GB for testing blob-lib (but breaks linker for some tests).
     // 3MiB L1d cache.
     // let heap_size = ((1<<20) * 3) / 32 - memory_size;
     let combined_size = memory_size + heap_size;

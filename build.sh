@@ -45,7 +45,8 @@ elif [ "$BACKEND" == "zb" ]; then
   libs="-lziegenberg"
   lib_path=$HOME/ziegenberg/zig-out/lib
   if [ "$BUILD_BACKEND" -eq 1 ]; then
-    (cd ~/ziegenberg && zig build --release=fast) || exit 1
+    # (cd ~/ziegenberg && zig build --release=fast) || exit 1
+    (cd ~/ziegenberg && zig build) || exit 1
   fi
 else
   echo "Unknown backend: $BACKEND"
